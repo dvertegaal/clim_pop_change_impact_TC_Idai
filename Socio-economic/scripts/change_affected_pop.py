@@ -86,17 +86,17 @@ gdf = gdf.to_crs(region.crs)
 region_geom = region.geometry.iloc[0]
 districts_adm2 = gdf[gdf.intersects(region_geom)].copy()
 
-# population raster GHSL (original 100 m resolution)
+# population raster from the Global Human Settlement Layer (GHSL) database (original 100 m resolution)
 population_raster_path_2020 = Path(join(BASE_DATA_PATH, "population_data/GHSL_POP/GHS_POP_E2020_GLOBE_R2023A_54009_100_V1_0_R12_C22.tif"))
 # population_raster_path_1990 = Path(join(BASE_DATA_PATH, "population_data/GHSL_POP/GHS_POP_E1990_GLOBE_R2023A_54009_100_V1_0_R12_C22.tif"))
 population_raster_path_1975 = Path(join(BASE_DATA_PATH, "population_data/GHSL_POP/GHS_POP_E1975_GLOBE_R2023A_54009_100_V1_0_R12_C22.tif"))
 
 # population raster HE (original 1 km resolution)
-population_raster_path_2019_1km = Path(join(BASE_DATA_PATH, "population_data/HE/Pop_2019_30.tif"))
-population_raster_path_2020_1km = Path(join(BASE_DATA_PATH, "population_data/HE/Pop_2020_30.tif"))
-population_raster_path_2015_1km = Path(join(BASE_DATA_PATH, "population_data/HE/Pop_2015_30.tif"))  
-# population_raster_path_1990_1km = Path(join(BASE_DATA_PATH, "population_data/HE/Pop_1990_30.tif"))  
-population_raster_path_1975_1km = Path(join(BASE_DATA_PATH, "population_data/HE/Pop_1975_30.tif"))  
+# population_raster_path_2019_1km = Path(join(BASE_DATA_PATH, "population_data/HE/Pop_2019_30.tif"))
+# population_raster_path_2020_1km = Path(join(BASE_DATA_PATH, "population_data/HE/Pop_2020_30.tif"))
+# population_raster_path_2015_1km = Path(join(BASE_DATA_PATH, "population_data/HE/Pop_2015_30.tif"))  
+# # population_raster_path_1990_1km = Path(join(BASE_DATA_PATH, "population_data/HE/Pop_1990_30.tif"))  
+# population_raster_path_1975_1km = Path(join(BASE_DATA_PATH, "population_data/HE/Pop_1975_30.tif"))  
 
 settlement_type_path = Path("results/gis/avg_rural_per_grid.tif")
 
@@ -106,47 +106,47 @@ with rasterio.open(settlement_type_path) as src:
         settlement_type_grid_crs = src.crs
 
 # Open original 100 m GHSL population rasters
-with rasterio.open(population_raster_path_2020) as src_2020:
-    region_proj = region.to_crs(src_2020.crs)
-    pop_2020_100m, transform_pop_2020_100m = mask(src_2020, region_proj.geometry, crop=True)
-    print("No-data value Population 2020:", src_2020.nodata)
-    pop_2020_100m = np.where(pop_2020_100m == -200, np.nan, pop_2020_100m)
-    print("Remaining -200 values:", np.sum(pop_2020_100m == -200))
+# with rasterio.open(population_raster_path_2020) as src_2020:
+#     region_proj = region.to_crs(src_2020.crs)
+#     pop_2020_100m, transform_pop_2020_100m = mask(src_2020, region_proj.geometry, crop=True)
+#     print("No-data value Population 2020:", src_2020.nodata)
+#     pop_2020_100m = np.where(pop_2020_100m == -200, np.nan, pop_2020_100m)
+#     print("Remaining -200 values:", np.sum(pop_2020_100m == -200))
 
-with rasterio.open(population_raster_path_1975) as src_1975:
-    region_proj = region.to_crs(src_1975.crs)
-    pop_1975_100m, transform_pop_1975_100m = mask(src_1975, region_proj.geometry, crop=True)
-    print("No-data value Population 1975:", src_1975.nodata)
-    pop_1975_100m = np.where(pop_1975_100m == -200, np.nan, pop_1975_100m)
-    print("Remaining -200 values:", np.sum(pop_1975_100m == -200))
+# with rasterio.open(population_raster_path_1975) as src_1975:
+#     region_proj = region.to_crs(src_1975.crs)
+#     pop_1975_100m, transform_pop_1975_100m = mask(src_1975, region_proj.geometry, crop=True)
+#     print("No-data value Population 1975:", src_1975.nodata)
+#     pop_1975_100m = np.where(pop_1975_100m == -200, np.nan, pop_1975_100m)
+#     print("Remaining -200 values:", np.sum(pop_1975_100m == -200))
 
-with rasterio.open(population_raster_path_1990) as src_1990:
-    region_proj = region.to_crs(src_1990.crs)
-    pop_1990_100m, transform_pop_1990_100m = mask(src_1990, region_proj.geometry, crop=True)
-    print("No-data value Population 1990:", src_1990.nodata)
-    pop_1990_100m = np.where(pop_1990_100m == -200, np.nan, pop_1990_100m)
-    print("Remaining -200 values:", np.sum(pop_1990_100m == -200))
+# with rasterio.open(population_raster_path_1990) as src_1990:
+#     region_proj = region.to_crs(src_1990.crs)
+#     pop_1990_100m, transform_pop_1990_100m = mask(src_1990, region_proj.geometry, crop=True)
+#     print("No-data value Population 1990:", src_1990.nodata)
+#     pop_1990_100m = np.where(pop_1990_100m == -200, np.nan, pop_1990_100m)
+#     print("Remaining -200 values:", np.sum(pop_1990_100m == -200))
 
-# Open original 1 km population rasters
-with rasterio.open(population_raster_path_2019_1km) as src_2019:
-    region_proj = region.to_crs(src_2019.crs)
-    pop_2019_1km, transform_pop_2019_1km = mask(src_2019, region_proj.geometry, crop=True)
-    print("No-data value Population 2019:", src_2019.nodata)
+# # Open original 1 km population rasters
+# with rasterio.open(population_raster_path_2019_1km) as src_2019:
+#     region_proj = region.to_crs(src_2019.crs)
+#     pop_2019_1km, transform_pop_2019_1km = mask(src_2019, region_proj.geometry, crop=True)
+#     print("No-data value Population 2019:", src_2019.nodata)
 
-with rasterio.open(population_raster_path_2020_1km) as src_2020:
-    region_proj = region.to_crs(src_2020.crs)
-    pop_2020_1km, transform_pop_2020_1km = mask(src_2020, region_proj.geometry, crop=True)
-    print("No-data value Population 2020:", src_2020.nodata)
+# with rasterio.open(population_raster_path_2020_1km) as src_2020:
+#     region_proj = region.to_crs(src_2020.crs)
+#     pop_2020_1km, transform_pop_2020_1km = mask(src_2020, region_proj.geometry, crop=True)
+#     print("No-data value Population 2020:", src_2020.nodata)
 
-with rasterio.open(population_raster_path_1990_1km) as src_1990:
-    region_proj = region.to_crs(src_1990.crs)
-    pop_1990_1km, transform_pop_1990_1km = mask(src_1990, region_proj.geometry, crop=True)
-    print("No-data value Population 1990:", src_1990.nodata)
+# with rasterio.open(population_raster_path_1990_1km) as src_1990:
+#     region_proj = region.to_crs(src_1990.crs)
+#     pop_1990_1km, transform_pop_1990_1km = mask(src_1990, region_proj.geometry, crop=True)
+#     print("No-data value Population 1990:", src_1990.nodata)
 
-with rasterio.open(population_raster_path_1975_1km) as src_1975:
-    region_proj = region.to_crs(src_1975.crs)
-    pop_1975_1km, transform_pop_1975_1km = mask(src_1975, region_proj.geometry, crop=True)
-    print("No-data value Population 1975:", src_1975.nodata)
+# with rasterio.open(population_raster_path_1975_1km) as src_1975:
+#     region_proj = region.to_crs(src_1975.crs)
+#     pop_1975_1km, transform_pop_1975_1km = mask(src_1975, region_proj.geometry, crop=True)
+#     print("No-data value Population 1975:", src_1975.nodata)
 
 
 # flood raster
@@ -635,7 +635,7 @@ def add_box(ax, extent):
 # ============================================================================================ #
 # ====================== Process population directly into flood grid ========================= #
 # ============================================================================================ #
-export_path = "p:/11210471-001-compass/04_Results/Idai_socioeconomic/preprocessed/population/"
+export_path = "results/Idai_socioeconomic/preprocessed/population/"
 # new_path = (join(prefix, f"11210471-001-compass/01_Data/population_data/downscaled/population_{source}_{year}_region_regrid.tif"))
 
 pop_arrays = {}
