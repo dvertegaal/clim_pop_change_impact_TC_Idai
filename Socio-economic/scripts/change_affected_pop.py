@@ -1,187 +1,36 @@
 #%% run this script using the pixi environmental compass-socio
 import os
-from matplotlib import cm
-import yaml
 import json
 import numpy as np
 import pandas as pd
-import xarray as xr
 from pathlib import Path
 from os.path import join
 import rasterio
 from rasterio import features
 import geopandas as gpd
-import itertools
-import warnings
-from affine import Affine
-warnings.filterwarnings('ignore')
-import platform
 import matplotlib.pyplot as plt
-import matplotlib.colors as mcolors
-from matplotlib.cm import ScalarMappable
-from matplotlib.colors import LinearSegmentedColormap
-from matplotlib.colors import BoundaryNorm
-from matplotlib.colors import Normalize
-from rasterio.mask import mask
-from shapely.geometry import box
-from shapely.geometry import Polygon
-import cartopy.crs as ccrs
-import rioxarray as rxr 
-# from hydromt import DataCatalog
-from tqdm import tqdm
-from scipy.signal import find_peaks
-from matplotlib.colors import PowerNorm, TwoSlopeNorm
-from rasterio.transform import rowcol
-from matplotlib.gridspec import GridSpec
-from matplotlib.gridspec import GridSpecFromSubplotSpec
 import matplotlib.patheffects as path_effects
+from matplotlib.cm import ScalarMappable
+import matplotlib.colors as mcolors
+from matplotlib.colors import LinearSegmentedColormap, Normalize, PowerNorm, TwoSlopeNorm, ListedColormap
+from matplotlib.gridspec import GridSpec, GridSpecFromSubplotSpec
+from matplotlib.patches import Rectangle, ConnectionPatch
+import matplotlib.ticker as mticker
 from matplotlib.ticker import FuncFormatter
 from matplotlib.patches import Patch
 from matplotlib.lines import Line2D
 from rasterio.features import rasterize
-from matplotlib.colors import ListedColormap
-from cartopy.mpl.geoaxes import GeoAxes
-from mpl_toolkits.axes_grid1.inset_locator import inset_axes
 import cartopy.crs as ccrs
 from pyproj import Transformer
-from matplotlib.patches import Rectangle
-import matplotlib.ticker as mticker
-
-# prefix = "p:/" if platform.system() == "Windows" else "/p/"
-
-# ===== CONFIGURATION =====
-EVENT_NAME = "Idai"
-BASE_DATA_PATH = Path("p:/11210471-001-compass/01_Data")
-BASE_RUN_PATH = Path("p:/11210471-001-compass/03_Runs/sofala/Idai")
-SCENARIO_PATH_F = "event_tp_era5_hourly_zarr_CF0_GTSMv41_CF0_era5_hourly_spw_IBTrACS_CF0" # factual
-SCENARIO_PATH_CF = "event_tp_era5_hourly_zarr_CF-6_GTSMv41_CF-0.07_era5_hourly_spw_IBTrACS_CF-4" # counterfactual
-
-# ===== FILE PATHS =====
-# Base directory for the specific event and scenario
-sfincs_dir_F  = BASE_RUN_PATH / "sfincs" / SCENARIO_PATH_F
-sfincs_dir_CF = BASE_RUN_PATH / "sfincs" / SCENARIO_PATH_CF
-
-# ===== DATA CATALOG =====
-# if platform.system() == "Windows":
-#     datacat_path = os.path.abspath("../Workflows/03_data_catalogs/datacatalog_general.yml")
-# else:
-#     datacat_path = os.path.abspath("../Workflows/03_data_catalogs/datacatalog_general___linux.yml")
-# data_catalog = DataCatalog(data_libs = [datacat_path])
-
-#%%
-# ===== Input files ==== #
-region = gpd.read_file(join(sfincs_dir_F, "gis/region.geojson"))
-region = region.to_crs("EPSG:4326")
-background = gpd.read_file(join(BASE_DATA_PATH, "sofala_geoms/sofala_region_background.geojson"), driver="GeoJSON")
-shapefile_sofala = gpd.read_file(join(BASE_DATA_PATH, "sofala_geoms/sofala_province.shp"))
-
-# Load the admin3 district in the case study region to validate exposed people
-beira_district = gpd.read_file(join(BASE_DATA_PATH, "sofala_geoms/Beira_region.shp"))
-districts_adm3 = gpd.read_file(join(BASE_DATA_PATH, "sofala_geoms/sofala_districts_study_region.shp"))
-
-# Load the GADM level 2 shapefile
-# districts_adm2 = data_catalog.get_geodataframe("gadm_level2", geom=region, buffer=1000)
-gdf = gpd.read_file(join(BASE_DATA_PATH, "sofala_geoms/gadm41_MOZ_shp/gadm41_MOZ_2.shp"))
-gdf = gdf.to_crs(region.crs)
-region_geom = region.geometry.iloc[0]
-districts_adm2 = gdf[gdf.intersects(region_geom)].copy()
-
-# population raster from the Global Human Settlement Layer (GHSL) database (original 100 m resolution)
-population_raster_path_2020 = Path(join(BASE_DATA_PATH, "population_data/GHSL_POP/GHS_POP_E2020_GLOBE_R2023A_54009_100_V1_0_R12_C22.tif"))
-# population_raster_path_1990 = Path(join(BASE_DATA_PATH, "population_data/GHSL_POP/GHS_POP_E1990_GLOBE_R2023A_54009_100_V1_0_R12_C22.tif"))
-population_raster_path_1975 = Path(join(BASE_DATA_PATH, "population_data/GHSL_POP/GHS_POP_E1975_GLOBE_R2023A_54009_100_V1_0_R12_C22.tif"))
-
-# population raster HE (original 1 km resolution)
-# population_raster_path_2019_1km = Path(join(BASE_DATA_PATH, "population_data/HE/Pop_2019_30.tif"))
-# population_raster_path_2020_1km = Path(join(BASE_DATA_PATH, "population_data/HE/Pop_2020_30.tif"))
-# population_raster_path_2015_1km = Path(join(BASE_DATA_PATH, "population_data/HE/Pop_2015_30.tif"))  
-# # population_raster_path_1990_1km = Path(join(BASE_DATA_PATH, "population_data/HE/Pop_1990_30.tif"))  
-# population_raster_path_1975_1km = Path(join(BASE_DATA_PATH, "population_data/HE/Pop_1975_30.tif"))  
-
-settlement_type_path = Path("results/gis/avg_rural_per_grid.tif")
-
-with rasterio.open(settlement_type_path) as src:
-        settlement_type_grid = src.read(1, masked=True)
-        settlement_type_grid_affine = src.transform
-        settlement_type_grid_crs = src.crs
-
-# Open original 100 m GHSL population rasters
-# with rasterio.open(population_raster_path_2020) as src_2020:
-#     region_proj = region.to_crs(src_2020.crs)
-#     pop_2020_100m, transform_pop_2020_100m = mask(src_2020, region_proj.geometry, crop=True)
-#     print("No-data value Population 2020:", src_2020.nodata)
-#     pop_2020_100m = np.where(pop_2020_100m == -200, np.nan, pop_2020_100m)
-#     print("Remaining -200 values:", np.sum(pop_2020_100m == -200))
-
-# with rasterio.open(population_raster_path_1975) as src_1975:
-#     region_proj = region.to_crs(src_1975.crs)
-#     pop_1975_100m, transform_pop_1975_100m = mask(src_1975, region_proj.geometry, crop=True)
-#     print("No-data value Population 1975:", src_1975.nodata)
-#     pop_1975_100m = np.where(pop_1975_100m == -200, np.nan, pop_1975_100m)
-#     print("Remaining -200 values:", np.sum(pop_1975_100m == -200))
-
-# with rasterio.open(population_raster_path_1990) as src_1990:
-#     region_proj = region.to_crs(src_1990.crs)
-#     pop_1990_100m, transform_pop_1990_100m = mask(src_1990, region_proj.geometry, crop=True)
-#     print("No-data value Population 1990:", src_1990.nodata)
-#     pop_1990_100m = np.where(pop_1990_100m == -200, np.nan, pop_1990_100m)
-#     print("Remaining -200 values:", np.sum(pop_1990_100m == -200))
-
-# # Open original 1 km population rasters
-# with rasterio.open(population_raster_path_2019_1km) as src_2019:
-#     region_proj = region.to_crs(src_2019.crs)
-#     pop_2019_1km, transform_pop_2019_1km = mask(src_2019, region_proj.geometry, crop=True)
-#     print("No-data value Population 2019:", src_2019.nodata)
-
-# with rasterio.open(population_raster_path_2020_1km) as src_2020:
-#     region_proj = region.to_crs(src_2020.crs)
-#     pop_2020_1km, transform_pop_2020_1km = mask(src_2020, region_proj.geometry, crop=True)
-#     print("No-data value Population 2020:", src_2020.nodata)
-
-# with rasterio.open(population_raster_path_1990_1km) as src_1990:
-#     region_proj = region.to_crs(src_1990.crs)
-#     pop_1990_1km, transform_pop_1990_1km = mask(src_1990, region_proj.geometry, crop=True)
-#     print("No-data value Population 1990:", src_1990.nodata)
-
-# with rasterio.open(population_raster_path_1975_1km) as src_1975:
-#     region_proj = region.to_crs(src_1975.crs)
-#     pop_1975_1km, transform_pop_1975_1km = mask(src_1975, region_proj.geometry, crop=True)
-#     print("No-data value Population 1975:", src_1975.nodata)
+from rasterio.mask import mask
+from shapely.geometry import box, Polygon
+import rioxarray as rxr 
+from tqdm import tqdm
+from scipy.signal import find_peaks
+from affine import Affine
 
 
-# flood raster
-F_flooding = sfincs_dir_F / "plot_output" / "floodmap_15cm.tif"
-CF_flooding = sfincs_dir_CF / "plot_output" / "floodmap_15cm.tif"
-
-# Flood model subgrid
-sfincs_subgrid = join(sfincs_dir_F, "subgrid", "dep_subgrid.tif")
-
-
-#%% Read flood data and background polygons
-# --- Flood grid properties ---
-with rasterio.open(sfincs_subgrid) as src:
-    flood_grid_crs, flood_grid_transform, flood_grid_shape = src.crs, src.transform, (src.height, src.width)
-
-# --- Setup region ---
-region = region.to_crs(flood_grid_crs)
-region_wsg84 = region.to_crs("EPSG:4326")
-region_geom = [json.loads(region.to_json())["features"][0]["geometry"]]
-
-# --- Read flood rasters ---
-hmax_F_da = rxr.open_rasterio(F_flooding).squeeze("band", drop=True)  # if single-band
-hmax_CF_da = rxr.open_rasterio(CF_flooding).squeeze("band", drop=True)  # if single-band
-hmax_F = hmax_F_da.values
-hmax_CF = hmax_CF_da.values
-hmax_diff = hmax_F - hmax_CF
-
-# Load urban polygons, reproject to match flood raster CRS and rasterize
-gdf_urban = gpd.read_file("data/GLOPOP-SG/urban_area.geojson")
-gdf_urban = gdf_urban.to_crs(flood_grid_crs)
-urban_mask = rasterize([(geom, 1) for geom in gdf_urban.geometry],
-                       out_shape=hmax_F.shape,
-                       transform=flood_grid_transform,
-                       fill=0, dtype='uint8')
-
+# ====== HELPER FUNCTIONS ======
 # get extent from raster transform
 def get_extent(transform, width, height):
     left = transform[2]
@@ -190,32 +39,212 @@ def get_extent(transform, width, height):
     bottom = top + height * transform[4]
     return [left, right, top, bottom]
 
-flood_extent = get_extent(flood_grid_transform, flood_grid_shape[1], flood_grid_shape[0])
+# --- Function to save raster only if it does not yet exist ---
+def save_raster(array, out_path, transform, crs):
+    # """Save raster only if it does NOT yet exist."""
+    # if os.path.exists(out_path):
+    #     print(f"✔ File already exists, skipping: {out_path}")
+    #     return
+    
+    print(f"▶ Writing raster: {out_path}")
+    profile = {
+        "driver": "GTiff",
+        "dtype": rasterio.float32,
+        "count": 1,
+        "height": array.shape[0],
+        "width": array.shape[1],
+        "crs": crs,
+        "transform": transform,
+        "compress": "deflate"
+    }
+    
+    with rasterio.open(out_path, "w", **profile) as dst:
+        dst.write(array.astype("float32"), 1)
 
-# --- Background layers for plotting ---
-# Define a polygon to remove/mask out land layer (incorrect boundary over the ocean)
-mask_poly = Polygon([(34.9,-20.3), (36,-20.3), (36,-19.9), (34.9,-19.9)])
-bg_filtered = background.copy()
-bg_filtered['geometry'] = bg_filtered.geometry.apply(lambda g: g.difference(mask_poly))
+# --- Function to setup map axes with consistent formatting ---
+def setup_map_axes(
+    axes,
+    region_utm,
+    background_utm,
+    flood_extent,
+    subplot_labels=None,
+    titles=None,
 
-# Reproject background and region to flood grid CRS for consistent plotting
-background_utm = background.to_crs(flood_grid_crs)
-bg_filtered_utm = bg_filtered.to_crs(flood_grid_crs)
-region_utm = region.to_crs(flood_grid_crs)
-districts_adm3_utm = districts_adm3.to_crs(flood_grid_crs)
-districts_adm2_utm = districts_adm2.to_crs(flood_grid_crs)
-beira_utm = beira_district.to_crs(flood_grid_crs)
+    # layout controls
+    show_left_labels_only=True,
+    show_gridlabels=True,
 
-# Land boundary based of background
-mask_box = box(34.8, -20.3, 35.3, -19.9)  # minx, miny, maxx, maxy
-background_outside_box = background[~background.intersects(mask_box)]
+    # styling
+    axis_labelsize=9,
+    subplot_labelsize=10,
+    title_fontsize=10,
 
-# Remove districts that are not connecting to the region
-drop_districts = ["Muanza", "Gororngosa-Sede", "Galinha"]
-districts_adm3_filtered = districts_adm3_utm[~districts_adm3_utm['NAME_3'].isin(drop_districts)]
+    # optional extra layers
+    background_outside_box=None,
+
+    # annotation control
+    add_outside_background=True,
+    add_grid=True,
+    add_subplot_labels=True,
+    add_titles=True,
+):
+    """
+    Standardized Cartopy map formatting for multi-panel figures.
+    """
+
+    axes_arr = np.atleast_1d(axes)
+    ncols = axes_arr.shape[-1] if axes_arr.ndim >= 2 else axes_arr.size
+    nrows = axes_arr.shape[0] if axes_arr.ndim >= 2 else 1
+    axes_flat = axes_arr.ravel()
+
+    for i, ax in enumerate(axes_flat):
+
+        # -----------------------
+        # Base map layers
+        # -----------------------
+        background_utm.plot(ax=ax, color="#E0E0E0", zorder=0)
+        region_utm.boundary.plot(ax=ax, edgecolor="black", linewidth=0.3)
+
+        ax.set_extent(
+            flood_extent,
+            crs=ccrs.UTM(36, southern_hemisphere=True),
+        )
+
+        # -----------------------
+        # Outside background (optional)
+        # -----------------------
+        if add_outside_background and background_outside_box is not None:
+            background_outside_box.plot(
+                ax=ax,
+                color="#E0E0E0",
+                transform=ccrs.PlateCarree(),
+                zorder=0,
+            )
+            background_outside_box.boundary.plot(
+                ax=ax,
+                color="#818181",
+                linewidth=0.2,
+                transform=ccrs.PlateCarree(),
+                zorder=1,
+            )
+
+        # -----------------------
+        # Gridlines
+        # -----------------------
+        if add_grid and show_gridlabels:
+            gl = ax.gridlines(
+                draw_labels=True,
+                linewidth=0.5,
+                color="gray",
+                alpha=0.5,
+                linestyle="--",
+            )
+
+            gl.right_labels = False
+            gl.top_labels = False
+            gl.xlabel_style = {"size": axis_labelsize}
+            gl.ylabel_style = {"size": axis_labelsize}
+
+            if show_left_labels_only and i % ncols != 0:
+                gl.left_labels = False
+
+            if i // ncols < nrows - 1:
+                gl.bottom_labels = False
+
+        # -----------------------
+        # Subplot labels
+        # -----------------------
+        if add_subplot_labels and subplot_labels and i < len(subplot_labels):
+            ax.text(
+                0,
+                1.02,
+                subplot_labels[i],
+                transform=ax.transAxes,
+                fontsize=subplot_labelsize,
+                fontweight="bold",
+                va="bottom",
+                ha="left",
+            )
+
+        # -----------------------
+        # Titles
+        # -----------------------
+        if add_titles and titles and i < len(titles):
+            ax.set_title(titles[i], fontsize=title_fontsize)
+
+# --- Function to convert extent from lat/lon to UTM (for consistent plotting and box addition) ---
+def extent_to_utm(extent):
+    xmin, xmax, ymin, ymax = extent
+    x1, y1 = transformer.transform(xmin, ymin)  # bottom-left
+    x2, y2 = transformer.transform(xmax, ymax)  # top-right
+    return [x1, x2, y1, y2]
+
+# --- Function to add a box to an axis given an extent (in UTM) ---
+def add_box(ax, extent):
+    xmin, xmax, ymin, ymax = extent
+    rect = Rectangle(
+        (xmin, ymin),
+        xmax - xmin,
+        ymax - ymin,
+        linewidth=1,
+        edgecolor="black",
+        facecolor="none",
+        # transform=ccrs.PlateCarree(),
+        zorder=10
+    )
+    ax.add_patch(rect)
+
+# --- Function to add reference locations to the map ---
+def add_reference_locations(ax):
+
+    locations = [
+        (34.862, -19.833, "Beira", (34.852, -19.89)),
+        (34.43,  -19.89,  "Buzi River", (34.44, -19.87)),
+        (34.543, -19.545, "Pungwe River", (34.554, -19.52)),
+    ]
+
+    for lon, lat, label, (tx, ty) in locations:
+
+        ax.plot(
+            lon,
+            lat,
+            marker="o",
+            color="black",
+            markersize=3,
+            markeredgecolor="white",
+            transform=ccrs.PlateCarree(),
+            zorder=5,
+        )
+
+        txt = ax.text(
+            tx,
+            ty,
+            label,
+            fontsize=8,
+            transform=ccrs.PlateCarree(),
+            zorder=5,
+        )
+
+        txt.set_path_effects([
+            path_effects.Stroke(linewidth=3, foreground="white"),
+            path_effects.Normal(),
+        ])
+
+    ax.text(
+        34.985,
+        -19.66,
+        "Beira municipality",
+        fontsize=7.2,
+        ha="center",
+        va="center",
+        style="italic",
+        color="#5C5C5C",
+        transform=ccrs.PlateCarree(),
+        zorder=4,
+    )
 
 
-#%% Read and regrid population data
+### functions for population analysis ###
 # --- Function to redistribute population over land pixels on flood grid ---
 def reproject_and_redistribute_population_over_land(pop_path, land_gdf, flood_crs, flood_transform, flood_shape, province_geom=None, region=None, districts_adm3=None, districts_adm2=None, year=None, out_raster_path=None, source=None):    
     print(f"▶ Loading {year} population raster...")
@@ -396,25 +425,17 @@ def reproject_and_redistribute_population_over_land(pop_path, land_gdf, flood_cr
     return pop_fine, pop_sofala, transform_sofala, pop_districts_adm3, pop_affine_districts_adm3, pop_districts_adm2, pop_affine_districts_adm2
 
 # --- Function to link population raster to flood depth as DataFrame ---
-def pop_raster_to_gdf(pop_array, flood_array, settlement_type_array, transform, year, climate, export_df=True, export_path=None):
+def pop_raster_to_gdf(pop_array, flood_array, transform, year, climate, export_df=True, export_path=None):
     print("Linking population raster to flood depth as DataFrame...")
-
-    # Check if shapes match
-    if pop_array.shape == flood_array.shape == settlement_type_array.shape:
-        print("✔ Shapes match")
-    else:
-        print("✖ Shapes do NOT match!", pop_array.shape, flood_array.shape, settlement_type_array.shape)
 
     # Flatten arrays
     pop_flat = pop_array.ravel()
     flood_flat = flood_array.ravel()
-    settlement_type_flat = settlement_type_array.ravel()
 
     # Mask zero-pop cells
     mask = (pop_flat > 0) & (flood_flat > 0)
     pop_vals = pop_flat[mask]
     flood_vals = flood_flat[mask]
-    settlement_type_vals = settlement_type_flat[mask]
 
     # Pixel coordinates (centers)
     rows, cols = np.indices(pop_array.shape)
@@ -423,7 +444,6 @@ def pop_raster_to_gdf(pop_array, flood_array, settlement_type_array, transform, 
     df = pd.DataFrame({
         "population": pop_vals,
         "flood_depth": flood_vals,
-        "settlement_type": settlement_type_vals,
         "x": xs,
         "y": ys
     })
@@ -533,227 +553,225 @@ def aggregate_pop(total_pop_array, flood_raster, transform, crs, region=None, ba
 
     return gdf_grid_masked
 
-# --- Function to save raster only if it does not yet exist ---
-def save_raster(array, out_path, transform, crs):
-    # """Save raster only if it does NOT yet exist."""
-    # if os.path.exists(out_path):
-    #     print(f"✔ File already exists, skipping: {out_path}")
-    #     return
-    
-    print(f"▶ Writing raster: {out_path}")
-    profile = {
-        "driver": "GTiff",
-        "dtype": rasterio.float32,
-        "count": 1,
-        "height": array.shape[0],
-        "width": array.shape[1],
-        "crs": crs,
-        "transform": transform,
-        "compress": "deflate"
-    }
-    
-    with rasterio.open(out_path, "w", **profile) as dst:
-        dst.write(array.astype("float32"), 1)
-
-
-def setup_map_axes(
-    axes,
-    region_utm,
-    background_utm,
-    flood_extent,
-    subplot_labels=None,
-    titles=None,
-    show_left_labels_only=True,
-    label_offset=(0, 1.02),
-    axis_labelsize=9,
-    subplot_labelsize=10,
-    title_fontsize=10,
-    show_gridlabels=True
-):
-    """
-    Apply standard map formatting to one or more Cartopy axes:
-    region boundary, background, extent, gridlines, labels.
-    """
-    axes_arr = np.atleast_1d(axes)
-    ncols = axes_arr.shape[-1] if axes_arr.ndim >= 2 else axes_arr.size
-    nrows = axes_arr.shape[0] if axes_arr.ndim >= 2 else 1
-    axes_flat = axes_arr.ravel()
-    for i, ax in enumerate(axes_flat):
-        background_utm.plot(ax=ax, color="#E0E0E0", zorder=0)
-        region_utm.boundary.plot(ax=ax, edgecolor="black", linewidth=0.3)
-        ax.set_extent(flood_extent, crs=ccrs.UTM(36, southern_hemisphere=True))
-
-        if show_gridlabels:
-            gl = ax.gridlines(draw_labels=True, linewidth=0.5, color="gray", alpha=0.5, linestyle="--")
-            gl.right_labels = False
-            gl.top_labels = False
-            gl.xlabel_style = {"size": axis_labelsize}
-            gl.ylabel_style = {"size": axis_labelsize}
-            if show_left_labels_only and i % ncols != 0:
-                gl.left_labels = False
-            if i // ncols < nrows - 1:
-                gl.bottom_labels = False
-        
-        if subplot_labels and i < len(subplot_labels):
-            ax.text(
-                label_offset[0],
-                label_offset[1],
-                subplot_labels[i],
-                transform=ax.transAxes,
-                fontsize=subplot_labelsize,
-                fontweight="bold",      
-                va="bottom",
-                ha="left",
-            )
-        if titles and i < len(titles):
-            ax.set_title(titles[i], fontsize=title_fontsize)
-
-
-def extent_to_utm(extent):
-    xmin, xmax, ymin, ymax = extent
-    x1, y1 = transformer.transform(xmin, ymin)  # bottom-left
-    x2, y2 = transformer.transform(xmax, ymax)  # top-right
-    return [x1, x2, y1, y2]
-
-
-def add_box(ax, extent):
-    xmin, xmax, ymin, ymax = extent
-    rect = Rectangle(
-        (xmin, ymin),
-        xmax - xmin,
-        ymax - ymin,
-        linewidth=1,
-        edgecolor="black",
-        facecolor="none",
-        # transform=ccrs.PlateCarree(),
-        zorder=10
+# --- Function to print exposure statistics ---
+def print_exposure_stats(label, pop, exposed):
+    print(f"\n{label}")
+    print(f"Total population in region: {np.nansum(pop):,.0f}")
+    print(f"Total exposed people: {np.nansum(exposed):,.0f}")
+    print(
+        f"Exposed people percentage of total population: "
+        f"{100 * np.nansum(exposed) / np.nansum(pop):.2f}%"
     )
-    ax.add_patch(rect)
+
+
+# =======================================================================================================================
+# =================================================== START OF CODE =====================================================
+# =======================================================================================================================
+# ===== CONFIGURATION =====
+EVENT_NAME = "Idai"
+BASE_DATA_PATH = Path("p:/11210471-001-compass/01_Data")
+BASE_RUN_PATH = Path("p:/11210471-001-compass/03_Runs/sofala/Idai")
+SCENARIO_PATH_F = "event_tp_era5_hourly_zarr_CF0_GTSMv41_CF0_era5_hourly_spw_IBTrACS_CF0" # factual
+SCENARIO_PATH_CF = "event_tp_era5_hourly_zarr_CF-6_GTSMv41_CF-0.07_era5_hourly_spw_IBTrACS_CF-4" # counterfactual
+
+# =======================================================================================================================
+# ===== FLOOD MODEL FILES ==== 
+# Base directory for the specific event and scenario
+sfincs_dir_F  = BASE_RUN_PATH / "sfincs" / SCENARIO_PATH_F
+sfincs_dir_CF = BASE_RUN_PATH / "sfincs" / SCENARIO_PATH_CF
+
+# Read flood rasters
+F_flooding = sfincs_dir_F / "plot_output" / "floodmap_15cm.tif"
+CF_flooding = sfincs_dir_CF / "plot_output" / "floodmap_15cm.tif"
+hmax_F_da = rxr.open_rasterio(F_flooding).squeeze("band", drop=True)  # if single-band
+hmax_CF_da = rxr.open_rasterio(CF_flooding).squeeze("band", drop=True)  # if single-band
+hmax_F = hmax_F_da.values
+hmax_CF = hmax_CF_da.values
+hmax_diff = hmax_F - hmax_CF
+
+# Flood model subgrid and region geometry
+sfincs_subgrid = join(sfincs_dir_F, "subgrid", "dep_subgrid.tif")
+
+# --- Flood grid properties ---
+with rasterio.open(sfincs_subgrid) as src:
+    flood_grid_crs, flood_grid_transform, flood_grid_shape = src.crs, src.transform, (src.height, src.width)
+flood_extent = get_extent(flood_grid_transform, flood_grid_shape[1], flood_grid_shape[0])
+
+# --- Setup region ---
+region_wsg84 = gpd.read_file(join(sfincs_dir_F, "gis/region.geojson")).to_crs("EPSG:4326")
+region_geom_poly = region_wsg84.geometry.iloc[0]
+region = region_wsg84.to_crs(flood_grid_crs)
+region_geom = [json.loads(region.to_json())["features"][0]["geometry"]]
+
+# =======================================================================================================================
+# ===== GEOSPATIAL DATA =====
+# background = gpd.read_file(join(BASE_DATA_PATH, "gis/case_study_region_background.geojson"), driver="GeoJSON")
+# shapefile_sofala = gpd.read_file(join(BASE_DATA_PATH, "gis/sofala_province.shp"))  # from https://gadm.org/ and processed
+# beira_district = gpd.read_file(join(BASE_DATA_PATH, "gis/Beira_region.shp")) # from https://gadm.org/ and processed
+# districts_adm3 = gpd.read_file(join(BASE_DATA_PATH, "gis/sofala_districts_study_region.shp")) # from https://gadm.org/ and processed
+# gdf = gpd.read_file(join(BASE_DATA_PATH, "gis/gadm41_MOZ_2.shp")).to_crs(region_wsg84.crs) # from https://gadm.org/ and processed
+background = gpd.read_file(join(BASE_DATA_PATH, "sofala_geoms/sofala_region_background.geojson"), driver="GeoJSON")
+shapefile_sofala = gpd.read_file(join(BASE_DATA_PATH, "sofala_geoms/sofala_province.shp"))  # from https://gadm.org/ and processed
+beira_district = gpd.read_file(join(BASE_DATA_PATH, "sofala_geoms/Beira_region.shp")) # from https://gadm.org/ and processed
+districts_adm3 = gpd.read_file(join(BASE_DATA_PATH, "sofala_geoms/sofala_districts_study_region.shp")) # from https://gadm.org/ and processed
+gdf = gpd.read_file(join(BASE_DATA_PATH, "sofala_geoms/gadm41_MOZ_shp/gadm41_MOZ_2.shp")).to_crs(region_wsg84.crs) # from https://gadm.org/ and processed
+
+districts_adm2 = gdf[gdf.intersects(region_geom_poly)].copy()
+
+# Load urban polygons, reproject to match flood raster CRS and rasterize
+gdf_urban = gpd.read_file("../data/GLOPOP-SG/urban_area.geojson")
+gdf_urban = gdf_urban.to_crs(flood_grid_crs)
+urban_mask = rasterize([(geom, 1) for geom in gdf_urban.geometry],
+                       out_shape=hmax_F.shape,
+                       transform=flood_grid_transform,
+                       fill=0, dtype='uint8')
+
+# --- Background layers for plotting ---
+# Define a polygon to remove/mask out land layer (incorrect boundary over the ocean)
+mask_poly = Polygon([(34.9,-20.3), (36,-20.3), (36,-19.9), (34.9,-19.9)])
+bg_filtered = background.copy()
+bg_filtered['geometry'] = bg_filtered.geometry.apply(lambda g: g.difference(mask_poly))
+
+# Reproject background and region to flood grid CRS for consistent plotting
+background_utm = background.to_crs(flood_grid_crs)
+bg_filtered_utm = bg_filtered.to_crs(flood_grid_crs)
+region_utm = region.to_crs(flood_grid_crs)
+districts_adm3_utm = districts_adm3.to_crs(flood_grid_crs)
+districts_adm2_utm = districts_adm2.to_crs(flood_grid_crs)
+beira_utm = beira_district.to_crs(flood_grid_crs)
+
+# Land boundary based of background
+mask_box = box(34.8, -20.3, 35.3, -19.9)  # minx, miny, maxx, maxy
+background_outside_box = background[~background.intersects(mask_box)]
+
+# Remove districts that are not connecting to the region
+drop_districts = ["Muanza", "Gororngosa-Sede", "Galinha"]
+districts_adm3_filtered = districts_adm3_utm[~districts_adm3_utm['NAME_3'].isin(drop_districts)]
+
+# =======================================================================================================================
+# ===== POPULATION DATA =====
+# population raster from the Global Human Settlement Layer (GHSL) database (original 100 m resolution)
+# You can download the GHSL population rasters for 2020 and 1975 here: https://human-settlement.emergency.copernicus.eu/download.php?ds=pop
+population_raster_path_2020 = Path(join(BASE_DATA_PATH, "population_data/GHSL_POP/GHS_POP_E2020_GLOBE_R2023A_54009_100_V1_0_R12_C22.tif"))
+population_raster_path_1975 = Path(join(BASE_DATA_PATH, "population_data/GHSL_POP/GHS_POP_E1975_GLOBE_R2023A_54009_100_V1_0_R12_C22.tif"))
 
 
 #%%
 # ============================================================================================ #
 # ====================== Process population directly into flood grid ========================= #
 # ============================================================================================ #
-export_path = "results/Idai_socioeconomic/preprocessed/population/"
-# new_path = (join(prefix, f"11210471-001-compass/01_Data/population_data/downscaled/population_{source}_{year}_region_regrid.tif"))
+export_path = "../data/preprocessed/population/"
+population_configs = [(1975, population_raster_path_1975, "GHSL_100m"), (2020, population_raster_path_2020, "GHSL_100m")]
+flood_maps = {"F": hmax_F, "CF": hmax_CF}
 
-pop_arrays = {}
-pop_sofala_arrays = {}
-pop_sofala_districts_adm3 = {}
-pop_affine_sofala_districts_adm3 = {}
-pop_sofala_districts_adm2 = {}
-pop_affine_sofala_districts_adm2 = {}
-# --- Reproject to flood grid and redistribute population rasters over land ---
-for year, path, source in [(1975, population_raster_path_1975, "GHSL_100m"),
-                           (2020, population_raster_path_2020, "GHSL_100m")]:
-    pop_arrays[year], pop_sofala_arrays[year], transform_sofala_land, pop_sofala_districts_adm3[year], pop_affine_sofala_districts_adm3[year], pop_sofala_districts_adm2[year], pop_affine_sofala_districts_adm2[year] = reproject_and_redistribute_population_over_land(
+# -------------------------------------------------------------------------------------------- #
+# Reproject population to flood grid
+# -------------------------------------------------------------------------------------------- #
+pop_data = {}
+for year, path, source in population_configs:
+    (pop, pop_sofala, transform_sofala_land, adm3, adm3_affine, adm2, adm2_affine
+     ) = reproject_and_redistribute_population_over_land(
         pop_path=path, land_gdf=background_utm, flood_crs=flood_grid_crs, flood_transform=flood_grid_transform,
         flood_shape=flood_grid_shape, province_geom=shapefile_sofala, region=region, districts_adm3=districts_adm3_filtered,
         districts_adm2=districts_adm2, year=year, source=source,
-        out_raster_path=(join(prefix, f"11210471-001-compass/01_Data/population_data/downscaled/population_{source}_{year}_region_regrid.tif")))
+        out_raster_path=(join(BASE_DATA_PATH, f"population_data/downscaled/population_{source}_{year}_region_regrid.tif")))
 
-# --- Compute exposed population GeoDataFrames ---
-gdf_pop_2020_flood_depth_F  = pop_raster_to_gdf(pop_arrays[2020], hmax_F, settlement_type_grid, flood_grid_transform, year=2020, climate="F", export_df=True, export_path=export_path)
-gdf_pop_2020_flood_depth_CF = pop_raster_to_gdf(pop_arrays[2020], hmax_CF, settlement_type_grid, flood_grid_transform, year=2020, climate="CF", export_df=True, export_path=export_path)
-gdf_pop_1975_flood_depth_F  = pop_raster_to_gdf(pop_arrays[1975], hmax_F, settlement_type_grid, flood_grid_transform, year=1975, climate="F", export_df=True, export_path=export_path)
-gdf_pop_1975_flood_depth_CF = pop_raster_to_gdf(pop_arrays[1975], hmax_CF, settlement_type_grid, flood_grid_transform, year=1975, climate="CF", export_df=True, export_path=export_path)
+    pop_data[year] = {
+        "population": pop,
+        "pop_sofala": pop_sofala,
+        "transform_sofala_land": transform_sofala_land,
+        "adm3": adm3,
+        "adm3_affine": adm3_affine,
+        "adm2": adm2,
+        "adm2_affine": adm2_affine
+    }
 
-# simple rasters for fast plotting
-ra_exposed_pop_2020_F  = np.where(hmax_F > 0, pop_arrays[2020], 0)
-ra_exposed_pop_2020_CF = np.where(hmax_CF > 0, pop_arrays[2020], 0)
-ra_exposed_pop_1975_F  = np.where(hmax_F > 0, pop_arrays[1975], 0)
-ra_exposed_pop_1975_CF = np.where(hmax_CF > 0, pop_arrays[1975], 0)
+# -------------------------------------------------------------------------------------------- #
+# Flood exposure calculations
+# -------------------------------------------------------------------------------------------- #
+flood_depth_gdfs = {}
+exposed_rasters = {}
+exposed_gdfs = {}
+coarse_gdfs = {}
 
-# Compute exposed pop on fine grid
-gdf_pop_2020_exposed_F  = gdf_pop_2020_flood_depth_F[gdf_pop_2020_flood_depth_F['flood_depth'] > 0]
-gdf_pop_2020_exposed_CF = gdf_pop_2020_flood_depth_CF[gdf_pop_2020_flood_depth_CF['flood_depth'] > 0]
-gdf_pop_1975_exposed_F  = gdf_pop_1975_flood_depth_F[gdf_pop_1975_flood_depth_F['flood_depth'] > 0]
-gdf_pop_1975_exposed_CF = gdf_pop_1975_flood_depth_CF[gdf_pop_1975_flood_depth_CF['flood_depth'] > 0]
+for year in pop_data:
+    flood_depth_gdfs[year] = {}
+    exposed_rasters[year] = {}
+    exposed_gdfs[year] = {}
+    coarse_gdfs[year] = {}
 
-# --- Aggregate population to coarser grid ---
-gdf_pop_2020_exposed_F_coarse  = aggregate_pop(pop_arrays[2020], hmax_F, flood_grid_transform, flood_grid_crs, region_utm, background_utm)
-gdf_pop_2020_exposed_CF_coarse = aggregate_pop(pop_arrays[2020], hmax_CF, flood_grid_transform, flood_grid_crs, region_utm, background_utm)
-gdf_pop_1975_exposed_F_coarse  = aggregate_pop(pop_arrays[1975], hmax_F, flood_grid_transform, flood_grid_crs, region_utm, background_utm)
-gdf_pop_1975_exposed_CF_coarse = aggregate_pop(pop_arrays[1975], hmax_CF, flood_grid_transform, flood_grid_crs, region_utm, background_utm)
+    pop = pop_data[year]["population"]
 
+    for climate, hmax in flood_maps.items():
+        gdf = pop_raster_to_gdf(pop, hmax, flood_grid_transform, year=year, climate=climate, export_df=True, export_path=export_path)
+        
+        flood_depth_gdfs[year][climate] = gdf
+        exposed_rasters[year][climate] = np.where(hmax > 0, pop, 0)
+        exposed_gdfs[year][climate] = gdf[gdf["flood_depth"] > 0]
+        coarse_gdfs[year][climate] = aggregate_pop(pop, hmax, flood_grid_transform, flood_grid_crs, region_utm, background_utm)
 
-#%%
-# Uniform population growth
-pop_growth = (np.nansum(pop_arrays[2020]) - np.nansum(pop_arrays[1975])) / np.nansum(pop_arrays[1975])
-print(f"Uniform population growth from 1975 to 2020 in case study region: {(pop_growth*100):.2f}%")
+# ============================================================================================ #
+# Uniform population growth scenario
+# ============================================================================================ #
+pop_growth = (np.nansum(pop_data[2020]["population"]) - np.nansum(pop_data[1975]["population"])
+              ) / np.nansum(pop_data[1975]["population"])
+pop_uniform_2020 = pop_data[1975]["population"] * (1 + pop_growth)
 
-pop_array_uniform_2020 = pop_arrays[1975] * (1 + pop_growth)
+print(f"Uniform population growth from 1975 to 2020 in case study region: "f"{100 * pop_growth:.2f}%")
+print(f"{np.nansum(pop_uniform_2020):,.0f} people in 2020 with uniform growth")
+print(f"{np.nansum(pop_data[2020]['population']):,.0f} people in 2020 actual")
 
-# Sanity check
-print(f"{np.nansum(pop_array_uniform_2020):,.0f} people in 2020 with uniform growth")
-print(f"{np.nansum(pop_arrays[2020]):,.0f} people in 2020 actual")
+uniform_exposed_rasters = {}
+uniform_flood_depth_gdfs = {}
+uniform_exposed_gdfs = {}
 
-# Calculate exposure
-ra_exposed_pop_2020_F_uniform = np.where(hmax_F > 0, pop_array_uniform_2020, 0)
-ra_exposed_pop_2020_CF_uniform = np.where(hmax_CF > 0, pop_array_uniform_2020, 0)
+for climate, hmax in flood_maps.items():
+    uniform_exposed_rasters[climate] = np.where(hmax > 0, pop_uniform_2020, 0)
 
-# get flood depth per exposed population
-gdf_pop_2020_flood_depth_F_uniform  = pop_raster_to_gdf(pop_array_uniform_2020, hmax_F, settlement_type_grid, flood_grid_transform, year='2020_uniform', climate="F", export_df=True, export_path=export_path)
-gdf_pop_2020_flood_depth_CF_uniform = pop_raster_to_gdf(pop_array_uniform_2020, hmax_CF, settlement_type_grid, flood_grid_transform, year='2020_uniform', climate="CF", export_df=True, export_path=export_path)
+    gdf = pop_raster_to_gdf(pop_uniform_2020, hmax, flood_grid_transform, year="2020_uniform", 
+                            climate=climate, export_df=True, export_path=export_path)
+    uniform_flood_depth_gdfs[climate] = gdf
+    uniform_exposed_gdfs[climate] = gdf[gdf["flood_depth"] > 0]
 
-gdf_pop_2020_exposed_F_uniform  = gdf_pop_2020_flood_depth_F_uniform[gdf_pop_2020_flood_depth_F_uniform['flood_depth'] > 0]
-gdf_pop_2020_exposed_CF_uniform = gdf_pop_2020_flood_depth_CF_uniform[gdf_pop_2020_flood_depth_CF_uniform['flood_depth'] > 0]
+# ============================================================================================ #
+# Attribution statistics
+# ============================================================================================ #
+scenario_exposure = {
+    "2020_F": np.nansum(exposed_rasters[2020]["F"]),
+    "2020_CF": np.nansum(exposed_rasters[2020]["CF"]),
+    "1975_F": np.nansum(exposed_rasters[1975]["F"]),
+    "1975_CF": np.nansum(exposed_rasters[1975]["CF"]),
+    "2020_uniform_F": np.nansum(uniform_exposed_rasters["F"]),
+}
 
-# Aggregate to coarser cells
-gdf_pop_2020_exposed_F_uniform_coarse = aggregate_pop(pop_array_uniform_2020, hmax_F, flood_grid_transform, flood_grid_crs, region_utm, background_utm)
-gdf_pop_2020_exposed_CF_uniform_coarse = aggregate_pop(pop_array_uniform_2020, hmax_CF, flood_grid_transform, flood_grid_crs, region_utm, background_utm)
-# save_raster(ra_exposed_pop_2020_F_uniform,  "p:/11210471-001-compass/04_Results/Idai_socioeconomic/preprocessed/population/exposed_pop_2020_F_uniform.tif",  flood_grid_transform, flood_grid_crs)
-# save_raster(ra_exposed_pop_2020_CF_uniform, "p:/11210471-001-compass/04_Results/Idai_socioeconomic/preprocessed/population/exposed_pop_2020_CF_uniform.tif", flood_grid_transform, flood_grid_crs)
-# save_raster(pop_array_uniform_2020,         "p:/11210471-001-compass/04_Results/Idai_socioeconomic/preprocessed/population/population_2020_uniform.tif",      flood_grid_transform, flood_grid_crs)
+perct_attr_clim     = (scenario_exposure["2020_F"] - scenario_exposure["2020_CF"]) / scenario_exposure["2020_F"] * 100
+perct_attr_pop      = ( scenario_exposure["2020_F"] - scenario_exposure["1975_F"]) / scenario_exposure["2020_F"] * 100
+perct_attr_clim_pop = (scenario_exposure["2020_F"] - scenario_exposure["1975_CF"]) / scenario_exposure["2020_F"] * 100
 
-
-#%% ============================================================================================= #
-# ===================== Print summary statistics of exposed population ========================== #
-# =============================================================================================== #
-# Calculate overall attributable % of exposed population for each driver
-perct_attr_clim = (np.nansum(ra_exposed_pop_2020_F) - np.nansum(ra_exposed_pop_2020_CF)) / np.nansum(ra_exposed_pop_2020_F) * 100
-perct_attr_pop = (np.nansum(ra_exposed_pop_2020_F) - np.nansum(ra_exposed_pop_1975_F)) / np.nansum(ra_exposed_pop_2020_F) * 100
-perct_attr_clim_pop = (np.nansum(ra_exposed_pop_2020_F) - np.nansum(ra_exposed_pop_1975_CF)) / np.nansum(ra_exposed_pop_2020_F) * 100
-
-#%%
-print("2020 Factual exposed population stats:")
-print("Total population in region:", np.nansum(pop_arrays[2020]))
-print("Total population in Sofala:", np.nansum(pop_sofala_arrays[2020]))
-print("Total exposed people:", np.nansum(ra_exposed_pop_2020_F).astype(int))
-print("Exposed people percentage of total population:", 100 * np.nansum(ra_exposed_pop_2020_F).astype(int) / np.nansum(pop_arrays[2020]))
-
-print("\n2020 Counterfactual exposed population stats:")
-print("Total population in region:", np.nansum(pop_arrays[2020]))
-print("Total population in Sofala:", np.nansum(pop_sofala_arrays[2020]))
-print("Total exposed people:", np.nansum(ra_exposed_pop_2020_CF).astype(int))
-print("Exposed people percentage of total population:", 100 * np.nansum(ra_exposed_pop_2020_CF).astype(int) / np.nansum(pop_arrays[2020]))
-
-print("\n1975 Factual exposed population stats:")
-print("Total population in region:", np.nansum(pop_arrays[1975]))
-print("Total population in Sofala:", np.nansum(pop_sofala_arrays[1975]))
-print("Total exposed people:", np.nansum(ra_exposed_pop_1975_F).astype(int))
-print("Exposed people percentage of total population:", 100 * np.nansum(ra_exposed_pop_1975_F).astype(int) / np.nansum(pop_arrays[1975]))
-
-print("\n1975 Counterfactual exposed population stats:")
-print("Total population in region:", np.nansum(pop_arrays[1975])) # using 1975 population as proxy for 1990 since we don't have 1990 flood maps 
-print("Total population in Sofala:", np.nansum(pop_sofala_arrays[1975]))
-print("Total exposed people:", np.nansum(ra_exposed_pop_1975_CF).astype(int))
-print("Exposed people percentage of total population:", 100 * np.nansum(ra_exposed_pop_1975_CF).astype(int) / np.nansum(pop_arrays[1975]))
-
-print("\n2020 UNIFORM exposed population stats:")
-print("Total population in region:", np.nansum(pop_array_uniform_2020))
-print("Total exposed people:", np.nansum(ra_exposed_pop_2020_F_uniform).astype(int))
-print("Exposed people percentage of total population:", 100 * np.nansum(ra_exposed_pop_2020_F_uniform).astype(int) / np.nansum(pop_arrays[2020]))
+# printing stats
+print_exposure_stats("2020 Factual exposed population stats:", pop_data[2020]["population"], 
+                     exposed_rasters[2020]["F"])
+print_exposure_stats("2020 Counterfactual exposed population stats:", pop_data[2020]["population"], 
+                     exposed_rasters[2020]["CF"])
+print_exposure_stats("1975 Factual exposed population stats:", pop_data[1975]["population"], 
+                     exposed_rasters[1975]["F"])
+print_exposure_stats("1975 Counterfactual exposed population stats:", pop_data[1975]["population"], 
+                     exposed_rasters[1975]["CF"])
+print_exposure_stats("2020 UNIFORM exposed population stats:", pop_uniform_2020, uniform_exposed_rasters["F"])
 
 print("\nOne-line attribution numbers:")
-print(f"Exposed population in 2020 Factual: {int(np.nansum(ra_exposed_pop_2020_F).astype(int)):,}")
-print(f"Exposed population attributable to climate change: {int(np.nansum(ra_exposed_pop_2020_F) - np.nansum(ra_exposed_pop_2020_CF)):,} {perct_attr_clim:.2f}%")
-print(f"Exposed population attributable to population change (2020-1975): {int(np.nansum(ra_exposed_pop_2020_F) - np.nansum(ra_exposed_pop_1975_F)):,} {perct_attr_pop:.2f}%")
-print(f"Exposed population attributable to population change and climate change: {int(np.nansum(ra_exposed_pop_2020_F) - np.nansum(ra_exposed_pop_1975_CF)):,} {perct_attr_clim_pop:.2f}%")
-
-print(f"Exposed population attributable to population change (uniform growth): {int(np.nansum(ra_exposed_pop_2020_F) - np.nansum(ra_exposed_pop_2020_F_uniform)):,} {100 * (np.nansum(ra_exposed_pop_2020_F) - np.nansum(ra_exposed_pop_2020_F_uniform)) / np.nansum(ra_exposed_pop_2020_F):.2f}%")
-print(f"Population growth from 1975 to 2020 in the region: {int(np.nansum(pop_arrays[2020]) - np.nansum(pop_arrays[1975])):,} {100 * (np.nansum(pop_arrays[2020]) - np.nansum(pop_arrays[1975])) / np.nansum(pop_arrays[1975]):.2f}%")
+print(f"Exposed population in 2020 Factual: " f"{scenario_exposure['2020_F']:,.0f}")
+print(f"Exposed population attributable to climate change: " f"{scenario_exposure['2020_F'] - scenario_exposure['2020_CF']:,.0f} "
+      f"({perct_attr_clim:.2f}%)")
+print(f"Exposed population attributable to population change (2020-1975): " f"{scenario_exposure['2020_F'] - scenario_exposure['1975_F']:,.0f} "
+      f"({perct_attr_pop:.2f}%)")
+print(f"Exposed population attributable to population change and climate change: " f"{scenario_exposure['2020_F'] - scenario_exposure['1975_CF']:,.0f} "
+      f"({perct_attr_clim_pop:.2f}%)")
+print(f"Exposed population attributable to population change "
+      f"(uniform growth): " f"{scenario_exposure['2020_F'] - scenario_exposure['2020_uniform_F']:,.0f} "
+      f"({100 * (scenario_exposure['2020_F'] - scenario_exposure['2020_uniform_F']) / scenario_exposure['2020_F']:.2f}%)")
+print(f"Population growth from 1975 to 2020 in the region: " f"{np.nansum(pop_data[2020]['population']) - np.nansum(pop_data[1975]['population']):,.0f} "
+     f"({100 * (np.nansum(pop_data[2020]['population']) - np.nansum(pop_data[1975]['population'])) / np.nansum(pop_data[1975]['population']):.2f}%)")
 
 
 #%% ============================================================================================ # 
@@ -772,96 +790,74 @@ def compute_cdf_and_bins(gdf, bins, depth_col="flood_depth", pop_col="population
     pop_by_depth = pd.Series(pop).groupby(pd.cut(flood, bins)).sum()
 
     return pop_by_depth
-    
+
+# Flood depth bins    
 bins_fine = np.arange(0, 3.5 + 0.02, 0.01)
-low_mask = (bins_fine[:-1] >= 0.15) & (bins_fine[:-1] < 0.5)
-mid_mask = (bins_fine[:-1] >= 0.5) & (bins_fine[:-1] < 1.5)
-high_mask = bins_fine[:-1] >= 1.5
-pop_2020_by_depth_F_fine    = compute_cdf_and_bins(gdf_pop_2020_exposed_F, bins_fine)
-pop_2020_by_depth_CF_fine   = compute_cdf_and_bins(gdf_pop_2020_exposed_CF, bins_fine)
-pop_1975_by_depth_F_fine    = compute_cdf_and_bins(gdf_pop_1975_exposed_F, bins_fine)
-pop_1975_by_depth_CF_fine   = compute_cdf_and_bins(gdf_pop_1975_exposed_CF, bins_fine)
-pop_2020_by_depth_F_uniform = compute_cdf_and_bins(gdf_pop_2020_exposed_F_uniform, bins_fine)
-
 bins_coarse = np.arange(0, 3.5 + 0.2, 0.1)
-pop_2020_by_depth_F_coarse = compute_cdf_and_bins(gdf_pop_2020_exposed_F, bins_coarse)
-pop_2020_by_depth_CF_coarse = compute_cdf_and_bins(gdf_pop_2020_exposed_CF, bins_coarse)
-pop_1975_by_depth_F_coarse  = compute_cdf_and_bins(gdf_pop_1975_exposed_F, bins_coarse)
-pop_1975_by_depth_CF_coarse = compute_cdf_and_bins(gdf_pop_1975_exposed_CF, bins_coarse)
 
-# Absolute differences in population per flood depth bin
-diff_clim = (pop_2020_by_depth_F_fine.values - pop_2020_by_depth_CF_fine.values)
-diff_pop = (pop_2020_by_depth_F_fine.values - pop_1975_by_depth_F_fine.values)
-diff_clim_pop = (pop_2020_by_depth_F_fine.values - pop_1975_by_depth_CF_fine.values)
-
-low_vals_abs_diff = [diff_clim[low_mask].sum(), diff_pop[low_mask].sum(), diff_clim_pop[low_mask].sum()]
-mid_vals_abs_diff = [diff_clim[mid_mask].sum(), diff_pop[mid_mask].sum(), diff_clim_pop[mid_mask].sum()]
-high_vals_abs_diff = [diff_clim[high_mask].sum(), diff_pop[high_mask].sum(), diff_clim_pop[high_mask].sum()]
-
-data_abs_diff = np.array([low_vals_abs_diff, mid_vals_abs_diff, high_vals_abs_diff])
-
-#%% --- settings for plotting ---
-# Colours based on conceptual figure
-colours = ['#00B050', '#1E2E57', "#28C2E9", '#9B59B6']
-
-# Bin centers for plotting
 bin_centers = bins_fine[:-1] + np.diff(bins_fine) / 2
 bin_centers_coarse = bins_coarse[:-1] + np.diff(bins_coarse) / 2
 
-# Plotting masks for different flood depth ranges (low, medium, high)
-x_bg = np.linspace(0, 3.5, 500)  # example x array
+# Flood depth categories
+depth_masks = {"Low": (bins_fine[:-1] >= 0.15) & (bins_fine[:-1] < 0.5),
+               "Medium": (bins_fine[:-1] >= 0.5) & (bins_fine[:-1] < 1.5),
+               "High": bins_fine[:-1] >= 1.5}
+
+# Scenarios
+scenario_gdfs = {"2020_F": exposed_gdfs[2020]["F"],
+                 "2020_CF": exposed_gdfs[2020]["CF"],
+                 "1975_F": exposed_gdfs[1975]["F"],
+                 "1975_CF": exposed_gdfs[1975]["CF"],
+                 "2020_uniform_F": uniform_exposed_gdfs["F"]}
+
+# Population distributions per flood depth
+depth_dist_fine = {scenario: compute_cdf_and_bins(gdf, bins_fine)
+                    for scenario, gdf in scenario_gdfs.items()}
+
+depth_dist_coarse = {scenario: compute_cdf_and_bins(gdf, bins_coarse)
+                     for scenario, gdf in scenario_gdfs.items() if scenario != "2020_uniform_F"}
+
+# Attribution differences
+diffs = {"Climate": depth_dist_fine["2020_F"].values - depth_dist_fine["2020_CF"].values,
+         "Population": depth_dist_fine["2020_F"].values - depth_dist_fine["1975_F"].values,
+         "Climate + Population": depth_dist_fine["2020_F"].values - depth_dist_fine["1975_CF"].values}
+
+# Absolute change per flood depth category
+data_abs_diff = np.array([[diff[mask].sum() for diff in diffs.values()]
+                          for mask in depth_masks.values()])
+
+# Relative change per flood depth bin
+change_per_depth = pd.DataFrame({
+    "Factual": depth_dist_coarse["2020_F"],
+    "CF_climate": depth_dist_coarse["2020_CF"],
+    "CF_population": depth_dist_coarse["1975_F"],
+    "CF_climate_population": depth_dist_coarse["1975_CF"]})
+
+for scenario in ["CF_climate", "CF_population", "CF_climate_population"]:
+    change_per_depth[f"Rel_change_{scenario}"] = (
+        (change_per_depth["Factual"] - change_per_depth[scenario])
+        / change_per_depth["Factual"] * 100)
+
+# Relative attributable exposed population by flood depth category
+baseline = depth_dist_fine["2020_F"].values
+
+data_attr = np.array([[np.nansum(diff[mask]) / np.nansum(baseline[mask]) * 100
+                       for diff in diffs.values()] for mask in depth_masks.values()])    
+
+# Plotting settings
+colours = ["#00B050", "#1E2E57", "#28C2E9", "#9B59B6"]
+
+x_bg = np.linspace(0, 3.5, 500)
+
 low_mask_bg = (x_bg >= 0.15) & (x_bg < 0.5)
 mid_mask_bg = (x_bg >= 0.5) & (x_bg < 1.5)
 high_mask_bg = x_bg >= 1.5
-
-
-
-#%%
-# ================== Plot attributable % of exposed population per flood depth =================== #
-Change_per_flood_depth = pd.DataFrame({
-    "Factual": pop_2020_by_depth_F_coarse,
-    "CF_climate": pop_2020_by_depth_CF_coarse,
-    "CF_population": pop_1975_by_depth_F_coarse,
-    "CF_climate_population": pop_1975_by_depth_CF_coarse
-})
-
-Change_per_flood_depth["Rel_change_CF_climate"] = (Change_per_flood_depth["Factual"] - Change_per_flood_depth["CF_climate"]) / Change_per_flood_depth["Factual"] * 100
-Change_per_flood_depth["Rel_change_CF_population"] = (Change_per_flood_depth["Factual"] - Change_per_flood_depth["CF_population"]) / Change_per_flood_depth["Factual"] * 100
-Change_per_flood_depth["Rel_change_CF_climate_population"] = (Change_per_flood_depth["Factual"] - Change_per_flood_depth["CF_climate_population"]) / Change_per_flood_depth["Factual"] * 100
-# Change_per_flood_depth["Dominant_driver_cc"] = Change_per_flood_depth["Rel_change_CF_climate"] / Change_per_flood_depth["Rel_change_CF_population"]
-# Change_per_flood_depth["Dominant_driver_pc"] = Change_per_flood_depth["Rel_change_CF_population"] / Change_per_flood_depth["Rel_change_CF_climate"]
 
 
 #%%
 # ==================================================================================================== #
 # =========================== Plotting exposed population per flood depth ============================ #
 # ==================================================================================================== #
-# Computing attributable exposed population per flood depth category
-def compute_attr_per_flood_depth_mask(diff, baseline, mask):
-    return np.nansum(diff[mask]) / np.nansum(baseline[mask]) * 100
-
-
-#%%
-# Absolute change in exposed population per flood depth category
-# low_vals_abs_diff = [diff_clim[low_mask].sum(), diff_pop[low_mask].sum(), diff_clim_pop[low_mask].sum()]
-# mid_vals_abs_diff = [diff_clim[mid_mask].sum(), diff_pop[mid_mask].sum(), diff_clim_pop[mid_mask].sum()]
-# high_vals_abs_diff = [diff_clim[high_mask].sum(), diff_pop[high_mask].sum(), diff_clim_pop[high_mask].sum()]
-
-# Relative change in exposed population per flood depth category
-low_vals_attr  = [compute_attr_per_flood_depth_mask(diff_clim, pop_2020_by_depth_F_fine, low_mask),
-                  compute_attr_per_flood_depth_mask(diff_pop, pop_2020_by_depth_F_fine, low_mask),
-                  compute_attr_per_flood_depth_mask(diff_clim_pop, pop_2020_by_depth_F_fine, low_mask)]
-mid_vals_attr  = [compute_attr_per_flood_depth_mask(diff_clim, pop_2020_by_depth_F_fine, mid_mask),
-                  compute_attr_per_flood_depth_mask(diff_pop, pop_2020_by_depth_F_fine, mid_mask),
-                  compute_attr_per_flood_depth_mask(diff_clim_pop, pop_2020_by_depth_F_fine, mid_mask)]
-high_vals_attr = [compute_attr_per_flood_depth_mask(diff_clim, pop_2020_by_depth_F_fine, high_mask), 
-                  compute_attr_per_flood_depth_mask(diff_pop, pop_2020_by_depth_F_fine, high_mask), 
-                  compute_attr_per_flood_depth_mask(diff_clim_pop, pop_2020_by_depth_F_fine, high_mask)]
-
-# data_abs_diff = np.array([low_vals_abs_diff, mid_vals_abs_diff, high_vals_abs_diff])
-data_attr = np.array([low_vals_attr, mid_vals_attr, high_vals_attr])
-
-#%%
 # FIGURE 2: Maps of factual exposed population and changes in flood impact drivers
 def plot_factual_and_driver_changes_extent(gdf_pop_exposed_F_coarse, gdf_pop_exposed_CF_clim_coarse, gdf_pop_exposed_CF_pop_coarse, 
                                              region_utm, background_utm, flood_extent):
@@ -969,117 +965,68 @@ def plot_factual_and_driver_changes_extent(gdf_pop_exposed_F_coarse, gdf_pop_exp
     axes[2].text(0.98, 0.98, f"{gdf_F['tot_pop_change'].iloc[0]:.0f}% increase", transform=axes[2].transAxes,
                  ha="right", va="top", fontsize=9, bbox=dict(boxstyle="round",pad=0.25, fc="white", ec="none", alpha=0.8))
     
-    # fig.savefig("figures/f02.png", dpi=300, bbox_inches='tight')
-    # fig.savefig("figures/f02.pdf", dpi=300, bbox_inches='tight')
-    fig.savefig("figures/f02.jpeg", dpi=300, bbox_inches='tight')
+    # fig.savefig("../figures/f02.png", dpi=300, bbox_inches='tight')
+    # fig.savefig("../figures/f02.pdf", dpi=300, bbox_inches='tight')
+    # fig.savefig("../figures/f02.jpeg", dpi=300, bbox_inches='tight')
 
     return fig
 
 
-fig = plot_factual_and_driver_changes_extent(gdf_pop_2020_exposed_F_coarse, gdf_pop_2020_exposed_CF_coarse, 
-                                             gdf_pop_1975_exposed_F_coarse, region_utm, background_utm, flood_extent)
+fig = plot_factual_and_driver_changes_extent(coarse_gdfs[2020]["F"], coarse_gdfs[2020]["CF"], 
+                                             coarse_gdfs[1975]["F"], region_utm, background_utm, flood_extent)
 plt.show()
-
-
 
 
 
 #%%
 # FIGURE 3: Plotting attributable exposed population per flood depth category
 print("Plotting attributable exposed population (three drivers)")
-
 # --- Compute differences ---
-gdf_F = gdf_pop_2020_exposed_F_coarse.copy()
-gdf_CF_pop = gdf_pop_1975_exposed_F_coarse.copy()
-gdf_CF_clim = gdf_pop_2020_exposed_CF_coarse.copy()
-gdf_CF_clim_pop = gdf_pop_1975_exposed_CF_coarse.copy()
+gdf_factual = coarse_gdfs[2020]["F"]
 
-total_factual = gdf_F["exposed_population"].sum()
-gdf_CF_clim["diff"] = (gdf_F["exposed_population"] - gdf_CF_clim["exposed_population"])
-gdf_CF_pop["diff"] = (gdf_F["exposed_population"] - gdf_CF_pop["exposed_population"])
-gdf_CF_clim_pop["diff"] = (gdf_F["exposed_population"] - gdf_CF_clim_pop["exposed_population"])
+datasets = {"Climate change": coarse_gdfs[2020]["CF"].copy(),
+            "Population change": coarse_gdfs[1975]["F"].copy(),
+            "Climate & population change": coarse_gdfs[1975]["CF"].copy()}
 
-datasets = [
-    ("Climate change", gdf_CF_clim),
-    ("Population change", gdf_CF_pop),
-    ("Climate & population change", gdf_CF_clim_pop)]
+for gdf in datasets.values():
+    gdf["diff"] = (gdf_factual["exposed_population"] - gdf["exposed_population"])
+
+total_factual = gdf_factual["exposed_population"].sum()
 
 # --- Figure ---
 fig, axes = plt.subplots(1, 3, figsize=(11, 5), dpi=300, constrained_layout=True,
                          subplot_kw={"projection": ccrs.UTM(36, southern_hemisphere=True)})
 
 # Shared normalization
-vmax = max(ds["diff"].max() for _, ds in datasets)
-vmin = min(ds["diff"].min() for _, ds in datasets)
+vmax = max(ds["diff"].max() for _, ds in datasets.items())
+vmin = min(ds["diff"].min() for _, ds in datasets.items())
 norm_diff = PowerNorm(gamma=0.5, vmin=0, vmax=vmax)
 cmap = plt.cm.Reds 
 cmap.set_bad("white")   # for masked zeros if needed
 
 subplot_labels = ["(a)", "(b)", "(c)"]
+titles = list(datasets.keys())
+
+setup_map_axes(axes, region_utm=region_utm, background_utm=background_utm, flood_extent=flood_extent,
+               subplot_labels=subplot_labels, titles=titles, show_left_labels_only=True,
+               background_outside_box=background_outside_box)
 
 # --- Plot loop ---
-for i, (title, gdf) in enumerate(datasets):
-    ax = axes[i]
-
-    # Plot zero/negative as white    
+for ax, (title, gdf) in zip(axes, datasets.items()):
     gdf_plot = gdf.copy()
     gdf_plot.loc[gdf_plot["diff"] == 0, "diff"] = np.nan
-
-    # Plot positive difference
-    gdf_plot.plot(column="diff", cmap=cmap, norm=norm_diff, edgecolor="grey",
-             linewidth=0.2, ax=ax, legend=False, zorder=2, rasterized=True,
-             missing_kwds={"color": "white"})
-
-    # Region + background
-    background_utm.plot(ax=ax, color="#E0E0E0", zorder=0)
-    region_utm.boundary.plot(ax=ax, edgecolor="black", linewidth=0.3)
-    ax.set_extent(flood_extent, crs=ccrs.UTM(36, southern_hemisphere=True))
-    beira_utm.boundary.plot(ax=ax, edgecolor="black", linewidth=0.5, zorder=3, alpha=0.7)
-
-    # Plot city and river locations and names
-    ax.plot(34.862, -19.833, marker='o', color='black', markersize=3, markeredgecolor='white', transform=ccrs.PlateCarree(), zorder=5)
-    text = ax.text(34.852, -19.89, "Beira", transform=ccrs.PlateCarree(), fontsize=8, color='black', zorder=5)
-    text.set_path_effects([path_effects.Stroke(linewidth=3, foreground='white'), path_effects.Normal()])
-    ax.text(34.985, -19.66, "Beira municipality", fontsize=7.2, ha="center", va="center", style="italic", 
-            transform = ccrs.PlateCarree(), zorder=4, color="#5C5C5C")
+    gdf_plot.plot(column="diff", cmap=cmap, norm=norm_diff, edgecolor="grey", linewidth=0.2, ax=ax,
+                  legend=False, zorder=2, rasterized=True, missing_kwds={"color": "white"})
     
-    # Buzi River marker and label
-    ax.plot(34.43, -19.89, marker='o', color='black', markersize=3, markeredgecolor='white', transform=ccrs.PlateCarree(), zorder=5)
-    text2 = ax.text(34.44, -19.87, "Buzi River", transform=ccrs.PlateCarree(),
-                    fontsize=8, color='black', zorder=5)
-    text2.set_path_effects([path_effects.Stroke(linewidth=3, foreground='white'), path_effects.Normal()])
-    # Pungwe River marker and label
-    ax.plot(34.543, -19.545, marker='o', color='black', markersize=3, markeredgecolor='white', transform=ccrs.PlateCarree(), zorder=5)
-    text3 = ax.text(34.554, -19.52, "Pungwe River", transform=ccrs.PlateCarree(),
-                    fontsize=8, color='black', zorder=5)
-    text3.set_path_effects([path_effects.Stroke(linewidth=3, foreground='white'), path_effects.Normal()])
+    # Plot the boundary of the Beira district and reference locations
+    beira_utm.boundary.plot(ax=ax, edgecolor="black", linewidth=0.5, alpha=0.7, zorder=3)
+    add_reference_locations(ax)
 
-    # Gridlines
-    gl = ax.gridlines(draw_labels=True, linewidth=0.5, color="gray", alpha=0.5, linestyle="--")
-    gl.right_labels = False
-    gl.top_labels = False
-    if i != 0:
-        gl.left_labels = False
-    ax.set_title(title, fontsize=10)
-    ax.text(0, 1.02, subplot_labels[i],
-            transform=ax.transAxes,
-            fontsize=10, fontweight="bold",
-            va="bottom", ha="left")
-    
-    rel_change = (gdf["diff"].sum() / total_factual * 100)
-    ax.text(
-        0.98, 0.98,
-        f"{round(gdf['diff'].sum(), -3):,.0f} people\n({rel_change:.0f} %)",
-        transform=ax.transAxes,
-        ha="right",
-        va="top",
-        fontsize=9,
-        bbox=dict(boxstyle="round,pad=0.25", fc="white", ec="none", alpha=0.8)
-    )
-    # Plot background
-    background_outside_box.plot(ax=ax, color='#E0E0E0', transform=ccrs.PlateCarree(), zorder=0)
-    background_outside_box.boundary.plot(ax=ax, color="#818181", linewidth=0.2, 
-                                         transform=ccrs.PlateCarree(), zorder=1)
+    # Annotate the absolute and relative change in exposed population
+    rel_change = gdf["diff"].sum() / total_factual * 100
+    ax.text(0.98, 0.98, f"{round(gdf['diff'].sum(), -3):,.0f} people\n({rel_change:.0f}%)", 
+            transform=ax.transAxes, ha="right", va="top", fontsize=9, bbox=dict(
+                boxstyle="round,pad=0.25", fc="white", ec="none", alpha=0.8))
 
 # --- Shared colorbar ---
 fmt = FuncFormatter(lambda x, pos: f"{int(x):,}")
@@ -1089,40 +1036,44 @@ cbar = fig.colorbar(sm, ax=axes, orientation="vertical", shrink=0.6, pad=0.02)
 cbar.set_label("Attributable exposed population (# people)", fontsize=10)
 cbar.ax.tick_params(labelsize=9)
 cbar.ax.yaxis.set_major_formatter(fmt)
-# cbar.set_ticks([-150, -75, 0, 5000, 10000, 15000, 20000, 25000, 30000])
 
-# fig.savefig("figures/f03.png", dpi=300, bbox_inches='tight')
-# fig.savefig("figures/f03.pdf", dpi=300, bbox_inches='tight')
-fig.savefig("figures/f03.jpeg", dpi=300, bbox_inches='tight')
+# fig.savefig("../figures/f03.png", dpi=300, bbox_inches='tight')
+# fig.savefig("../figures/f03.pdf", dpi=300, bbox_inches='tight')
+# fig.savefig("../figures/f03.jpeg", dpi=300, bbox_inches='tight')
 
 
 #%%
 # --- Stats of exposed population change in Beira district ---
-gdf_F = gdf_pop_2020_exposed_F_coarse.copy()
-# Select only cells that intersect Beira District
-beira_cells_F = gpd.overlay(gdf_F, beira_utm, how="intersection")
-beira_cells_clim = gpd.overlay(gdf_CF_clim, beira_utm, how="intersection")
-beira_cells_pop = gpd.overlay(gdf_CF_pop, beira_utm, how="intersection")
-beira_cells_clim_pop = gpd.overlay(gdf_CF_clim_pop, beira_utm, how="intersection")
+beira_scenarios = {"CF_climate": coarse_gdfs[2020]["CF"],
+                   "CF_population": coarse_gdfs[1975]["F"],
+                   "CF_climate_population": coarse_gdfs[1975]["CF"]}
 
-# Sum exposed population
-print(f"Total exposed population change in Beira District (CF Clim): {round(beira_cells_clim['diff'].sum(), -3):,.0f}")
-print(f"Total exposed population change in Beira District (CF Pop): {round(beira_cells_pop['diff'].sum(), -3):,.0f}")
-print(f"Total exposed population change in Beira District (CF Clim & Pop): {round(beira_cells_clim_pop['diff'].sum(), -3):,.0f}")
+beira_cells = {}
+for name, gdf in beira_scenarios.items():
+    beira_cells[name] = gpd.overlay(gdf, beira_utm, how="intersection")
 
-pop_2020 = beira_cells_F['total_population'].sum()
-pop_1975 = beira_cells_pop['total_population'].sum()
+beira_cells_F = gpd.overlay(coarse_gdfs[2020]["F"], beira_utm, how="intersection")
+
+for gdf in beira_cells.values():
+    gdf["diff"] = None
+
+for name, gdf in beira_cells.items():
+    print(f"Total exposed population change in Beira District ({name}): "
+          f"{round(gdf['diff'].sum(), -3):,.0f}")
+
+pop_2020 = beira_cells_F["total_population"].sum()
+pop_1975 = beira_cells["CF_population"]["total_population"].sum()
+
 growth_abs = pop_2020 - pop_1975
-growth_pct = (pop_2020 - pop_1975) / pop_1975 * 100
+growth_pct = growth_abs / pop_1975 * 100
 
 print(f"Total population in Beira in 2020: {round(pop_2020, -3):,.0f}")
 print(f"Total population in Beira in 1975: {round(pop_1975, -3):,.0f}")
-print(f"Population growth in Beira: {round(growth_abs, -3):,.0f} people ({growth_pct:.1f} %)")
+print(f"Population growth in Beira: " f"{round(growth_abs, -3):,.0f} people ({growth_pct:.1f} %)")
 
 
 #%% 
 # FIGURE 4 & Table S06: Flood depth category change and bar plot of attributable fraction per category
-# PREPARE FOR PLOTTING
 # --- Classify depth raster cells directly ---
 def depth_category_array(hmax):
     cat = np.full(hmax.shape, 'None', dtype=object)
@@ -1131,55 +1082,28 @@ def depth_category_array(hmax):
     cat[hmax > 1.5]                       = 'Very high'
     return cat
 
-cat_F  = depth_category_array(hmax_F)
-cat_CF = depth_category_array(hmax_CF)
+# --- Compute transition categories ---
+def compute_transition(cat_cf, cat_f, mask=None):
+    if mask is None:
+        mask = np.ones(cat_cf.shape, dtype=bool)
 
-# --- Transition array ---
-transition = np.full(hmax_F.shape, 'None', dtype=object)
-transition[(cat_CF == cat_F) & (cat_F != 'None')]           = 'No change'
-transition[(cat_CF == 'None')     & (cat_F == 'Low')]       = 'None → Low'
-transition[(cat_CF == 'None')     & (cat_F == 'Mod-high')]  = 'None → Mod-high'
-transition[(cat_CF == 'None')     & (cat_F == 'Very high')] = 'None → Very high'
-transition[(cat_CF == 'Low')      & (cat_F == 'Mod-high')]  = 'Low → Mod-high'
-transition[(cat_CF == 'Low')      & (cat_F == 'Very high')] = 'Low → Very high'
-transition[(cat_CF == 'Mod-high') & (cat_F == 'Very high')] = 'Mod-high → Very high'
+    cf = np.where(mask, cat_cf, "None")
+    f  = np.where(mask, cat_f, "None")
 
-all_transitions = ['No change', 'None → Low', 'None → Mod-high',
-                   'None → Very high', 'Low → Mod-high', 
-                   'Low → Very high', 'Mod-high → Very high']
-transition_counts = (pd.Series(transition.ravel())
-                     .value_counts()
-                     .reindex(all_transitions, fill_value=0))
-print(transition_counts)
-transition_counts.to_csv("results/Table_S06.csv")
+    transition = np.full(cat_cf.shape, "None", dtype=object)
+    transition[(cf == f) & (f != "None")] = "No change"
+    transition[(cf == "None") & (f == "Low")] = "None → Low"
+    transition[(cf == "None") & (f == "Mod-high")] = "None → Mod-high"
+    transition[(cf == "None") & (f == "Very high")] = "None → Very high"
+    transition[(cf == "Low") & (f == "Mod-high")] = "Low → Mod-high"
+    transition[(cf == "Low") & (f == "Very high")] = "Low → Very high"
+    transition[(cf == "Mod-high") & (f == "Very high")] = "Mod-high → Very high"
 
-# --- Analyze transition counts by urban/rural ---
-df = pd.DataFrame({"transition": transition.ravel(),
-                   "urban": urban_mask.ravel()})
-df["area_type"] = df["urban"].map({0: "Rural", 1: "Urban"})
-counts_settlement = (df.groupby(["transition", "area_type"]).size().unstack(fill_value=0))
-print("Transition counts by settlement type:")
-print(counts_settlement)
+    return transition
 
-# --- Color maps ---
-depth_colors = {
-    # 'none':     "#FFFFFF",
-    'Low':      '#9ECAE1',
-    'Mod-high': '#3182BD',
-    'Very high':'#08306B',
-}
-
-transition_colors = {
-    # 'None':            "#FFFFFF",
-    'No change':       '#CCCCCC',
-    # 'No change':       '#FFFFFF',
-    'None → Low':      '#fd8d3c',
-    'None → Mod-high': '#e6550d',
-    # 'None → Very high':'#7F2704',
-    'Low → Mod-high':  '#A1D99B',
-    # 'Low → Very high': '#238B45',
-    'Mod-high → Very high': '#00441B',
-}
+# --- Function to get transition counts for a given transition category ---
+def transition_counts_from_array(transition, all_transitions):
+    return (pd.Series(transition.ravel()).value_counts().reindex(all_transitions, fill_value=0))
 
 # --- Convert arrays to RGBA images for plotting ---
 def cat_array_to_rgba(cat_array, color_dict):
@@ -1190,57 +1114,61 @@ def cat_array_to_rgba(cat_array, color_dict):
         rgba[mask] = rgb
     return rgba
 
-rgba_F          = cat_array_to_rgba(cat_F, depth_colors)
-rgba_transition = cat_array_to_rgba(transition, transition_colors)
 
-
-# FIGURE 4 - PANEL B CTAEGORY CHANGE AMONG EXPOSED POPULATION
-cat_F_exp  = np.where(ra_exposed_pop_2020_F,  depth_category_array(hmax_F),  'None')
-cat_CF_exp = np.where(ra_exposed_pop_2020_CF, depth_category_array(hmax_CF), 'None')
-mask_exposed = (ra_exposed_pop_2020_F > 0) | (ra_exposed_pop_2020_CF > 0)
-cat_F_exp  = np.where(mask_exposed, cat_F,  'None')
-cat_CF_exp = np.where(mask_exposed, cat_CF, 'None')
-
-transition_exp = np.full(hmax_F.shape, 'None', dtype=object)
-
-transition_exp[(cat_CF_exp == cat_F_exp) & (cat_F_exp != 'None')]           = 'No change'
-transition_exp[(cat_CF_exp == 'None')     & (cat_F_exp == 'Low')]           = 'None → Low'
-transition_exp[(cat_CF_exp == 'None')     & (cat_F_exp == 'Mod-high')]      = 'None → Mod-high'
-transition_exp[(cat_CF_exp == 'None')     & (cat_F_exp == 'Very high')]     = 'None → Very high'
-transition_exp[(cat_CF_exp == 'Low')      & (cat_F_exp == 'Mod-high')]      = 'Low → Mod-high'
-transition_exp[(cat_CF_exp == 'Low')      & (cat_F_exp == 'Very high')]     = 'Low → Very high'
-transition_exp[(cat_CF_exp == 'Mod-high') & (cat_F_exp == 'Very high')]     = 'Mod-high → Very high'
-
-rgba_transition_exp = cat_array_to_rgba(transition_exp, transition_colors)
-
-#%%
-# Create a DataFrame for population counts by transition and urban/rural
-df = pd.DataFrame({'transition': transition_exp.ravel(),
-                  'population': ra_exposed_pop_2020_F.ravel(),
-                  'urban': urban_mask.ravel()})
-df = df[(df['transition'] != 'None') & (df['population'] > 0)]
-df['area_type'] = np.where(df['urban'] == 1, 'Urban', 'Rural')
-table = (df.groupby(['transition', 'area_type'])['population'].sum().unstack(fill_value=0))
+# --- Color maps ---
+depth_colors = {'Low': '#9ECAE1', 'Mod-high': '#3182BD', 'Very high':'#08306B'}
 all_transitions = ['No change', 'None → Low', 'None → Mod-high',
                    'None → Very high', 'Low → Mod-high', 
                    'Low → Very high', 'Mod-high → Very high']
-table_cat_change_settlement = table.reindex(all_transitions, fill_value=0)
 transition_codes = {'No change': 0, 'None → Low': 1, 'None → Mod-high': 2,
                     'None → Very high': 3, 'Low → Mod-high': 4,
                     'Low → Very high': 5, 'Mod-high → Very high': 6}
+transition_colors = {'No change':       '#CCCCCC',
+                     'None → Low':      '#fd8d3c',
+                     'None → Mod-high': '#e6550d',
+                    #  'None → Very high':'#7F2704',
+                     'Low → Mod-high':  '#A1D99B',
+                    #  'Low → Very high': '#238B45',
+                     'Mod-high → Very high': '#00441B'}
+# Transition colors with transparent for NaNs
+cmap_categories = ListedColormap(list(transition_colors.values()))
+cmap_categories.set_bad(color="none")
+
+
+# Classify depth categories for both scenarios and calculate transition
+cat_F  = depth_category_array(hmax_F)
+cat_CF = depth_category_array(hmax_CF)
+mask_exposed = (exposed_rasters[2020]["F"] > 0) | (exposed_rasters[2020]["CF"] > 0)
+
+transition = compute_transition(cat_CF, cat_F)
+transition_counts = transition_counts_from_array(transition, all_transitions)
+transition_counts.to_csv("../results/Table_S06.csv")
+transition_exp = compute_transition(cat_CF, cat_F, mask=mask_exposed)
+
+rgba_F          = cat_array_to_rgba(cat_F, depth_colors)
+rgba_transition = cat_array_to_rgba(transition, transition_colors)
+rgba_transition_exp = cat_array_to_rgba(transition_exp, transition_colors)
+
+# Create a DataFrame for population counts by transition and urban/rural
+df = pd.DataFrame({"transition": transition_exp.ravel(),
+                   "population": exposed_rasters[2020]["F"].ravel(),
+                   "urban": urban_mask.ravel()})
+df = df.query("transition != 'None' and population > 0")
+df["area_type"] = np.where(df["urban"] == 1, "Urban", "Rural")
+table = (df.groupby(["transition", "area_type"])["population"].sum().unstack(fill_value=0))
+table_cat_change_settlement = table.reindex(all_transitions, fill_value=0)
+
 transition_numeric = np.full(transition_exp.shape, np.nan, dtype=np.float32)
 for k, v in transition_codes.items():
     transition_numeric[transition_exp == k] = v
 
 print("Change in flood depth category among exposed population (by settlement type):")
 print(table_cat_change_settlement)
-table_cat_change_settlement.to_csv("results/transition_by_settlement_type.csv")
+table_cat_change_settlement.to_csv("../results/transition_by_settlement_type.csv")
 
-# Transition colors with transparent for NaNs
-cmap_categories = ListedColormap(list(transition_colors.values()))
-cmap_categories.set_bad(color="none")
-masked = np.ma.masked_invalid(transition_numeric)
 
+#%%
+# Plotting settings for Figure 4
 # To transfrom coordinates from WSG84 to UTM 36s
 transformer = Transformer.from_crs("EPSG:4326", "EPSG:32736", always_xy=True)
 
@@ -1250,213 +1178,158 @@ buzi_extent  = [34.57, 34.62, -19.895, -19.87]
 beira_extent_utm = extent_to_utm(beira_extent)
 buzi_extent_utm  = extent_to_utm(buzi_extent)
 
+def add_beira_context(
+    ax,
+    background,
+    urban_gdf=None,
+    mask_box=(34.8, -20.3, 35.3, -19.9),
+):
+    """
+    Adds:
+    - clipped background
+    - Beira marker + label
+    - river markers + labels
+    - optional urban overlay
+    """
 
-#%%
-# FIGURE 4
+    # --- Clip background ---
+    background_out = background[~background.intersects(box(*mask_box))]
+
+    background_out.plot(
+        ax=ax,
+        color="#E0E0E0",
+        transform=ccrs.PlateCarree(),
+        zorder=0,
+    )
+
+    background_out.boundary.plot(
+        ax=ax,
+        color="#818181",
+        linewidth=0.2,
+        transform=ccrs.PlateCarree(),
+        zorder=1,
+    )
+
+    # --- Static points (Beira + rivers) ---
+    features = [
+        (34.862, -19.833, "Beira", (34.852, -19.89)),
+        (34.43,  -19.89,  "Buzi River", (34.29, -19.882)),
+        (34.543, -19.545, "Pungwe River", (34.35, -19.538)),
+    ]
+
+    for lon, lat, label, (tx, ty) in features:
+        ax.plot(
+            lon, lat, "o",
+            color="black",
+            markersize=3,
+            markeredgecolor="white",
+            transform=ccrs.PlateCarree(),
+            zorder=5,
+        )
+
+        t = ax.text(
+            tx, ty, label,
+            transform=ccrs.PlateCarree(),
+            fontsize=8,
+            zorder=5,
+        )
+
+        t.set_path_effects([
+            path_effects.Stroke(linewidth=3, foreground="white"),
+            path_effects.Normal()
+        ])
+
+    # --- Optional urban overlay ---
+    if urban_gdf is not None:
+        urban_gdf.boundary.plot(
+            ax=ax,
+            edgecolor="#a6761d",
+            linewidth=0.8,
+            zorder=2,
+        )
+
+
+# ========================= FIGURE 4 =========================
+
 fig = plt.figure(figsize=(10, 10), dpi=300, constrained_layout=True)
+
 gs = GridSpec(2, 4, figure=fig, height_ratios=[2, 1.8], hspace=0.05, wspace=0.05)
 
 ax0 = fig.add_subplot(gs[0, 0:2], projection=ccrs.UTM(36, southern_hemisphere=True))
 ax1 = fig.add_subplot(gs[0, 2:4], projection=ccrs.UTM(36, southern_hemisphere=True))
 
 gs_bottom = GridSpecFromSubplotSpec(1, 10, subplot_spec=gs[1, :])
-ax2 = fig.add_subplot(gs_bottom[0, 2:8])  
+ax2 = fig.add_subplot(gs_bottom[0, 2:8])
+
 axes = [ax0, ax1, ax2]
 
-axes[0].imshow(rgba_F,          extent=flood_extent, origin="lower", zorder=2, transform=ccrs.UTM(36, southern_hemisphere=True))
-axes[1].imshow(rgba_transition, extent=flood_extent, origin="lower", zorder=2, transform=ccrs.UTM(36, southern_hemisphere=True))
+# --- Raster panels ---
+ax0.imshow(
+    rgba_F,
+    extent=flood_extent,
+    origin="lower",
+    transform=ccrs.UTM(36, southern_hemisphere=True),
+    zorder=2,
+)
 
-for ax in (axes[:2]):
-    # Plot city and river locations and names
-    ax.plot(34.862, -19.833, marker='o', color='black', markersize=3, markeredgecolor='white', transform=ccrs.PlateCarree(), zorder=5)
-    text = ax.text(34.852, -19.89, "Beira", transform=ccrs.PlateCarree(), fontsize=8, color='black', zorder=5)
-    text.set_path_effects([path_effects.Stroke(linewidth=3, foreground='white'), path_effects.Normal()])
-    # Buzi River marker and label
-    ax.plot(34.43, -19.89, marker='o', color='black', markersize=3, markeredgecolor='white', transform=ccrs.PlateCarree(), zorder=5)
-    text2 = ax.text(34.29, -19.882, "Buzi River", transform=ccrs.PlateCarree(),
-                    fontsize=8, color='black', zorder=5)
-    text2.set_path_effects([path_effects.Stroke(linewidth=3, foreground='white'), path_effects.Normal()])
-    # Pungwe River marker and label
-    ax.plot(34.543, -19.545, marker='o', color='black', markersize=3, markeredgecolor='white', transform=ccrs.PlateCarree(), zorder=5)
-    text3 = ax.text(34.35, -19.538, "Pungwe River", transform=ccrs.PlateCarree(),
-                    fontsize=8, color='black', zorder=5)
-    text3.set_path_effects([path_effects.Stroke(linewidth=3, foreground='white'), path_effects.Normal()])
-    # Plot background
-    mask_box = box(34.8, -20.3, 35.3, -19.9)  # minx, miny, maxx, maxy
-    background_outside_box = background[~background.intersects(mask_box)] # removing errorneous lines outside model region
-    background_outside_box.plot(ax=ax, color='#E0E0E0', transform=ccrs.PlateCarree(), zorder=0)
-    background_outside_box.boundary.plot(ax=ax, color="#818181", linewidth=0.2, 
-                                         transform=ccrs.PlateCarree(), zorder=1)
-    
-# Overlay urban boundaries
-gdf_urban.boundary.plot(ax=axes[1], edgecolor='#a6761d', 
-                        linewidth=0.8, zorder=2)
+ax1.imshow(rgba_transition, extent=flood_extent, origin="lower",
+           transform=ccrs.UTM(36, southern_hemisphere=True), zorder=2)
 
+# --- Context (Beira, rivers, background, optional urban) ---
+for ax in axes[:2]:
+    add_beira_context(ax, background, urban_gdf=gdf_urban)
+
+setup_map_axes(axes[:2], region_utm, background_utm, flood_extent, subplot_labels=["(a)", "(b)"],
+               titles=["", ""], axis_labelsize=10, subplot_labelsize=11)
+
+# ========================= PANEL (c): BAR PLOT =========================
 bar_width = 0.2
 x_pos = np.arange(3)
 labels = ["Low\n(0.15–0.5 m)", "Mod-high\n(0.5–1.5 m)", "Very high\n(>1.5 m)"]
 
-axes[2].bar(x_pos - bar_width, data_attr[:,0], width=bar_width,
-       label=f"Climate change ({int(np.round(perct_attr_clim))} %)",
-       color=colours[1])
-axes[2].bar(x_pos, data_attr[:,1], width=bar_width,
-       label=f"Population change ({int(np.round(perct_attr_pop))} %)",
-       color=colours[2])
-axes[2].bar(x_pos + bar_width, data_attr[:,2], width=bar_width,
-       label=f"Climate change &\nPopulation change ({int(np.round(perct_attr_clim_pop))} %)",
-       color=colours[3])
+ax2.bar(x_pos - bar_width, data_attr[:, 0], width=bar_width,
+        label=f"Climate change ({int(np.round(perct_attr_clim))} %)", color=colours[1])
+ax2.bar(x_pos, data_attr[:, 1], width=bar_width,
+        label=f"Population change ({int(np.round(perct_attr_pop))} %)", color=colours[2])
+ax2.bar(x_pos + bar_width, data_attr[:, 2], width=bar_width, 
+        label=f"Climate + population ({int(np.round(perct_attr_clim_pop))} %)", color=colours[3])
 
-setup_map_axes(axes[:2], region_utm, background_utm, flood_extent,
-               subplot_labels=["(a)", "(b)"],
-               titles=["", ""], axis_labelsize=10, subplot_labelsize=11, label_offset=(0, 1.01))
+# --- Formatting ---
+ax2.axhline(0, linestyle="-", color="black", alpha=0.7)
+ax2.set_axisbelow(True)
+ax2.grid(True, axis="y", linestyle="--", alpha=0.5)
+ax2.set_xlabel("Flood depth category", fontsize=11)
+ax2.set_xticks(x_pos)
+ax2.set_xticklabels(labels, fontdict={"fontweight": "bold", 'color': '#5C5C5C', "fontsize": 9})
+ax2.set_ylabel("Attributable exposed population (%)", fontsize=11)
+ax2.tick_params(axis="y", labelsize=9)
 
-# --- Map legends ---
-depth_legend = [Patch(facecolor=c, edgecolor='grey', label=k)
-                for k, c in depth_colors.items() if k != 'none']
-axes[0].legend(handles=depth_legend, title="Flood depth category",
-               loc='upper right', fontsize=9, alignment='left', title_fontsize=10)
-urban_legend = Line2D([0], [0], color='#a6761d', 
-                      linewidth=2, label='Urban area')
-transition_legend = [Patch(facecolor=c, edgecolor='grey', label=k)
-                     for k, c in transition_colors.items() if k != 'none']
-axes[1].legend(handles=transition_legend + [urban_legend], title="Flood category change",
-               loc='upper right', fontsize=9, alignment='left', title_fontsize=10)
+# --- Background shading ---
+ymin, ymax = ax2.get_ylim()
+xmin, xmax = ax2.get_xlim()
+xticks = ax2.get_xticks()
 
-# --- Bar chart formatting ---
-axes[2].axhline(0, linestyle="-", color="black", alpha=0.7)
-axes[2].set_axisbelow(True)
-axes[2].grid(True, axis='y', linestyle="--", alpha=0.5)
-axes[2].set_xlabel("Flood depth category", fontsize=11)
-axes[2].set_xticks(x_pos)
-axes[2].set_xticklabels(labels, fontdict={'fontweight': 'bold', 'color': '#5C5C5C', 'fontsize': 9})
-axes[2].tick_params(axis='y', labelsize=9)
-axes[2].set_ylabel("Attributable exposed population (%)", fontsize=11)
-ymin, ymax = axes[2].get_ylim()
-xmin, xmax = axes[2].get_xlim()
-xticks = axes[2].get_xticks()
 boundaries = ([xmin] +                                                           
         [(xticks[j] + xticks[j+1]) / 2 for j in range(len(xticks)-1)] +  
         [xticks[-1] + (xticks[-1] - xticks[-2]) / 2])
-shade_colors = ["#d9d9d9", "#b3b3b3", "#808080", "#FFFFFF"]
-axes[2].set_ylim(axes[2].get_ylim())
-axes[2].set_xlim(axes[2].get_xlim())  
+
+shade_colors = ["#d9d9d9", "#b3b3b3", "#808080"]
+ax2.set_ylim(ax2.get_ylim())
+ax2.set_xlim(ax2.get_xlim())  
 for j in range(len(xticks)):
-    axes[2].fill_betweenx([ymin, ymax], boundaries[j], boundaries[j+1],
-                          color=shade_colors[j], alpha=0.3, zorder=0)
-    
-# Legend with multi-line labels outside plot to keep it narrow
-axes[2].legend(fontsize=9, loc='upper right', 
-               handlelength=1.2, 
-               handleheight=1.5,
-               borderpad=0.5, 
-               )
+    ax2.fill_betweenx([ymin, ymax], boundaries[j], boundaries[j + 1], color=shade_colors[j],
+                      alpha=0.3, zorder=0)
+  
+# --- Legend and label ---
+ax2.legend(fontsize=9, loc="upper right")
+ax2.text(0, 1.02, "(c)", transform=ax2.transAxes, fontsize=11, fontweight="bold", va="bottom", ha="left")
 
-# (c) label aligned with map subplot labels
-axes[2].text(0, 1.02, "(c)", transform=axes[2].transAxes, fontsize=11,
-             fontweight="bold", va="bottom", ha="left")
-
-# fig.savefig("figures/f04.png", dpi=300, bbox_inches='tight')
-# fig.savefig("figures/f04.pdf", dpi=300, bbox_inches='tight')
-fig.savefig("figures/f04.jpeg", dpi=300, bbox_inches='tight')
+# ========================= SAVE =========================
+# fig.savefig("figures/f04.png", dpi=300, bbox_inches="tight")
+# fig.savefig("figures/f04.pdf", dpi=300, bbox_inches="tight")
+# fig.savefig("figures/f04.jpeg", dpi=300, bbox_inches="tight")
 
 plt.show()
-
-
-
-
-#%%
-# # STEP 1 — Build exposure dictionary
-# data = {}
-# for scenario, (gdf, year) in scenarios.items():
-#     data[scenario] = {}
-#     for depth_label, (dmin, dmax) in depth_bins.items():
-#         mask = (gdf["flood_depth"] > dmin) & (gdf["flood_depth"] <= dmax)
-#         exposed = np.nansum(gdf.loc[mask, "population"])
-#         data[scenario][depth_label] = {
-#             "total_pop": total_population[year],
-#             "exposed_pop": exposed}
-
-# # STEP 2 — Attribution 
-# for scenario in scenarios:
-#     if scenario == "F":
-#         continue
-
-#     for depth_label in depth_bins:
-#         F_val = data["F"][depth_label]["exposed_pop"]
-#         CF_val = data[scenario][depth_label]["exposed_pop"]
-#         data[scenario][depth_label]["abs_change"] = F_val - CF_val
-#         data[scenario][depth_label]["attributable_pct"] = (
-#             (F_val - CF_val) / F_val * 100 if F_val != 0 else np.nan)
-
-# # baseline has no attribution
-# for depth_label in depth_bins:
-#     data["F"][depth_label]["abs_change"] = 0
-#     data["F"][depth_label]["attributable_pct"] = 0
-
-# # TABLE 2 — Counterfactual decomposition
-# rows = []
-# for scenario in scenarios:
-#     # always use TOTAL bin only
-#     depth_label = "Total"
-#     F_val = data["F"][depth_label]["exposed_pop"]
-#     CF_val = data[scenario][depth_label]["exposed_pop"]
-#     abs_change = F_val - CF_val if scenario != "F" else 0
-#     attributable = ((F_val - CF_val) / F_val * 100) if (scenario != "F" and F_val != 0) else 0
-
-#     row = {"Scenario": scenario,
-#            "Total population": data[scenario][depth_label]["total_pop"],
-#            "Exposed population": data[scenario][depth_label]["exposed_pop"],
-#            "Absolute change vs F": abs_change,
-#            "Attributable (%)": attributable}
-#     rows.append(row)
-
-# df_table2 = pd.DataFrame(rows)
-# print("\nTABLE 2 — Counterfactual decomposition (TOTAL ONLY)")
-# print(df_table2)
-
-# export
-# df_table2.to_csv("results/table2_counterfactual_total_only.csv", index=False)
-
-
-
-
-#%%
-# # Separate table with (change) in exposed populaton relative to total population
-# data_pct = {}
-# for scenario, (gdf, year) in scenarios.items():
-#     data_pct[scenario] = {}
-#     total_pop = total_population[year]
-#     for depth_label in depth_bins:
-#         F_val = data["F"][depth_label]["exposed_pop"]
-#         exposed_val = data[scenario][depth_label]["exposed_pop"]
-#         data_pct[scenario][depth_label] = {
-#             "%_exposed_of_total_F": F_val / total_pop * 100,
-#             "%_exposed_of_total": exposed_val / total_pop * 100
-#             }
-
-# for scenario in scenarios:
-#     if scenario == "F":
-#         continue
-#     for depth_label in depth_bins:
-#         data_pct[scenario][depth_label]["diff_vs_F_pct_points"] = (
-#             data_pct[scenario][depth_label]["%_exposed_of_total"]
-#             - data_pct["F"][depth_label]["%_exposed_of_total_F"]
-#         )
-# for depth_label in depth_bins:
-#     data_pct["F"][depth_label]["diff_vs_F_pct_points"] = 0
-
-# rows = []
-# for scenario in scenarios:
-#     row = {}
-#     for depth_label in depth_bins:
-#         for metric in ["%_exposed_of_total", "diff_vs_F_pct_points"]:
-#             col = (depth_label, metric)
-#             row[col] = data_pct[scenario][depth_label].get(metric, np.nan)
-#     rows.append(pd.Series(row, name=scenario))
-
-# df_pct = pd.DataFrame(rows)
-# df_pct.columns = pd.MultiIndex.from_tuples(df_pct.columns)
-# df_pct
 
 
 #%% #############################################################################################
@@ -1554,10 +1427,10 @@ def draw_peak_arrows(x, yA, yB, peaksA, peaksB, color, label_prefix, label_offse
 fig, ax = plt.subplots(figsize=(8,5), dpi=300)
 
 x = bin_centers
-y_F = pop_2020_by_depth_F_fine.values
-y_CF_clim = pop_2020_by_depth_CF_fine.values
-y_CF_pop = pop_1975_by_depth_F_fine.values
-y_CF_clim_pop = pop_1975_by_depth_CF_fine.values
+y_F = depth_dist_fine["2020_F"].values
+y_CF_clim = depth_dist_fine["2020_CF"].values
+y_CF_pop = depth_dist_fine["1975_F"].values
+y_CF_clim_pop = depth_dist_fine["1975_CF"].values
 
 ymax = max(y_F.max(), y_CF_clim.max(), y_CF_pop.max(), y_CF_clim_pop.max()) * 1.05
 
@@ -1565,10 +1438,10 @@ ax.fill_between(x_bg[low_mask_bg], 0, ymax, color="#d9d9d9", alpha=0.3)
 ax.fill_between(x_bg[mid_mask_bg], 0, ymax, color="#b3b3b3", alpha=0.3)
 ax.fill_between(x_bg[high_mask_bg], 0, ymax, color="#808080", alpha=0.3)
 
-ax.plot(x, y_F, label=f"Factual ({np.round(np.nansum(ra_exposed_pop_2020_F), -3):,.0f} people)", color=colours[0], linewidth=2)
-ax.plot(x, y_CF_clim, label=f"Counterfactual Climate ({np.round(np.nansum(ra_exposed_pop_2020_CF), -3):,.0f} people)", color=colours[1], linewidth=1)
-ax.plot(x, y_CF_pop, label=f"Counterfactual Population ({np.round(np.nansum(ra_exposed_pop_1975_F), -3):,.0f} people)", color=colours[2], linewidth=1)
-ax.plot(x, y_CF_clim_pop, label=f"Counterfactual Climate & Population ({np.round(np.nansum(ra_exposed_pop_1975_CF), -3):,.0f} people)", color=colours[3], linewidth=1)
+ax.plot(x, y_F, label=f"Factual ({np.round(np.nansum(exposed_rasters[2020]['F']), -3):,.0f} people)", color=colours[0], linewidth=2)
+ax.plot(x, y_CF_clim, label=f"Counterfactual Climate ({np.round(np.nansum(exposed_rasters[2020]['CF']), -3):,.0f} people)", color=colours[1], linewidth=1)
+ax.plot(x, y_CF_pop, label=f"Counterfactual Population ({np.round(np.nansum(exposed_rasters[1975]['F']), -3):,.0f} people)", color=colours[2], linewidth=1)
+ax.plot(x, y_CF_clim_pop, label=f"Counterfactual Climate & Population ({np.round(np.nansum(exposed_rasters[1975]['CF']), -3):,.0f} people)", color=colours[3], linewidth=1)
 
 # Find peaks and sort by height
 peaks_F, props_F = find_peaks(y_F, prominence=0.02, distance=5) 
@@ -1620,16 +1493,16 @@ ax.set_ylim(0, ymax)
 ax.grid(True, linestyle="--", alpha=0.5)
 ax.legend()
 
-fig.savefig("figures/fS04.png", dpi=300, bbox_inches='tight')
-fig.savefig("figures/fS04.pdf", dpi=300, bbox_inches='tight')
+# fig.savefig("../figures/fS04.png", dpi=300, bbox_inches='tight')
+# fig.savefig("../figures/fS04.pdf", dpi=300, bbox_inches='tight')
 
 # %%
 # Figure S4 — Compare exposure change in the case of uniform growth per water depth
 fig, ax = plt.subplots(figsize=(8,5), dpi=300)
 
 x = bin_centers
-y_F = pop_2020_by_depth_F_fine.values
-y_CF_uni = pop_2020_by_depth_F_uniform.values
+y_F = depth_dist_fine["2020_F"].values
+y_CF_uni = depth_dist_fine["2020_uniform_F"].values
 
 ymax = max(y_F.max(), y_CF_uni.max()) * 1.05
 
@@ -1637,8 +1510,8 @@ ax.fill_between(x_bg[low_mask_bg], 0, ymax, color="#d9d9d9", alpha=0.3)
 ax.fill_between(x_bg[mid_mask_bg], 0, ymax, color="#b3b3b3", alpha=0.3)
 ax.fill_between(x_bg[high_mask_bg], 0, ymax, color="#808080", alpha=0.3)
 
-ax.plot(x, y_F, label=f"Factual ({np.round(np.nansum(ra_exposed_pop_2020_F), -3):,.0f} people)", color=colours[0], linewidth=2)
-ax.plot(x, y_CF_uni, label=f"Uniform growth ({np.round(np.nansum(ra_exposed_pop_2020_CF_uniform), -3):,.0f} people)", color="#1B4332", linewidth=1)
+ax.plot(x, y_F, label=f"Factual ({np.round(np.nansum(exposed_rasters[2020]['F']), -3):,.0f} people)", color=colours[0], linewidth=2)
+ax.plot(x, y_CF_uni, label=f"Uniform growth ({np.round(np.nansum(uniform_exposed_rasters['F']), -3):,.0f} people)", color="#1B4332", linewidth=1)
     
 ax.text(0.32, ymax*0.065, "Low", ha="center", fontweight="bold", color="#5C5C5C", fontsize=10)
 ax.text(1.1, ymax*0.065, "Mod-high", ha="center", fontweight="bold", color="#5C5C5C", fontsize=10)
@@ -1651,8 +1524,8 @@ ax.set_ylim(0, ymax)
 ax.grid(True, linestyle="--", alpha=0.5)
 ax.legend()
 
-fig.savefig("figures/fS05.png", dpi=300, bbox_inches='tight')
-fig.savefig("figures/fS05.pdf", dpi=300, bbox_inches='tight')
+# fig.savefig("../figures/fS05.png", dpi=300, bbox_inches='tight')
+# fig.savefig("../figures/fS05.pdf", dpi=300, bbox_inches='tight')
 
 
 
@@ -1667,13 +1540,13 @@ depth_bins = {"0.15-0.5 m": (0.15, 0.5),
               "Total": (0, np.inf)}
 
 # Scenarios 
-scenarios = {"F": (gdf_pop_2020_exposed_F, 2020),
-             "CF_clim": (gdf_pop_2020_exposed_CF, 2020),
-             "CF_pop": (gdf_pop_1975_exposed_F, 1975),
-             "CF_clim_pop": (gdf_pop_1975_exposed_CF, 1975)}
+scenarios = {"F": (exposed_gdfs[2020]["F"], 2020),
+             "CF_clim": (exposed_gdfs[2020]["CF"], 2020),
+             "CF_pop": (exposed_gdfs[1975]["F"], 1975),
+             "CF_clim_pop": (exposed_gdfs[1975]["CF"], 1975)}
 
-total_population = {2020: np.nansum(pop_arrays[2020]),
-                    1975: np.nansum(pop_arrays[1975])}
+total_population = {2020: np.nansum(pop_data[2020]["population"]),
+                    1975: np.nansum(pop_data[1975]["population"])}
 
 data = {}
 for scenario, (gdf, year) in scenarios.items():
@@ -1713,7 +1586,7 @@ print(df_final)
 # Export
 df_change_flood_category = df_final.copy()
 df_change_flood_category.columns = [f"{depth}_{metric}" for depth, metric in df_change_flood_category.columns]
-df_change_flood_category.to_csv("results/Table_S05.csv")
+# df_change_flood_category.to_csv("../results/Table_S05.csv")
 
 
 
@@ -1755,8 +1628,8 @@ ax.set_ylabel("Absolute change in exposed population (×10³ people)", fontsize=
 ax.legend(fontsize=10, loc='upper right', bbox_to_anchor=(1, 1))
 
 
-fig.savefig("figures/fS03.png", dpi=300, bbox_inches='tight')
-fig.savefig("figures/fS03.pdf", dpi=300, bbox_inches='tight')
+# fig.savefig("../figures/fS03.png", dpi=300, bbox_inches='tight')
+# fig.savefig("../figures/fS03.pdf", dpi=300, bbox_inches='tight')
 
 plt.tight_layout()
 plt.show()
@@ -1764,6 +1637,8 @@ plt.show()
 
 #%%
 # FIGURE S6 - Change in flood depth category among exposed population - zoomed into Buzi and Beira
+masked = np.ma.masked_invalid(transition_numeric)
+
 fig = plt.figure(figsize=(10, 6), dpi=300, constrained_layout=True)
 
 outer = fig.add_gridspec(1, 2, width_ratios=[2, 1.2], wspace=0.1)
@@ -1815,17 +1690,15 @@ gdf_urban.boundary.plot(ax=ax_main, edgecolor='#a6761d',
 
 setup_map_axes(ax_main, region_utm, background_utm, flood_extent,
                subplot_labels=[""], titles=[""], 
-               axis_labelsize=10, subplot_labelsize=11, 
-               label_offset=(0, 1.01))
-
+               axis_labelsize=10, subplot_labelsize=11)
 add_box(ax_main, beira_extent_utm)
 add_box(ax_main, buzi_extent_utm)
 setup_map_axes(ax_beira, region_utm, background_utm, beira_extent_utm, 
                subplot_labels=[""], titles=["Beira"], axis_labelsize=8,
-               subplot_labelsize=9, label_offset=(0, 1.01), show_gridlabels=False)
+               subplot_labelsize=9, show_gridlabels=False)
 setup_map_axes(ax_buzi, region_utm, background_utm, buzi_extent_utm,
                subplot_labels=[""], titles=["Búzi"], axis_labelsize=8,
-               subplot_labelsize=9, label_offset=(0, 1.01), show_gridlabels=False)
+               subplot_labelsize=9, show_gridlabels=False)
 
 # Create custom legend
 urban_legend = Line2D([0], [0], color='#a6761d', 
@@ -1835,888 +1708,38 @@ transition_legend = [Patch(facecolor=c, edgecolor='grey', label=k)
 ax_main.legend(handles=transition_legend + [urban_legend],
           title="Flood category change", loc='upper right', 
           fontsize=9, alignment='left', title_fontsize=10)
-
-from matplotlib.patches import ConnectionPatch
-
 fig.canvas.draw()
 
 # --- BEIRA CONNECTIONS ---
 # Main figure box corners (in data coordinates)
 beira_x0, beira_x1, beira_y0, beira_y1 = beira_extent_utm
-
 # Connect top-right corner of box to top-left of Beira subplot
-con1 = ConnectionPatch(
-    xyA=(beira_x1, beira_y1), coordsA=ax_main.transData,
-    xyB=(0, 1), coordsB=ax_beira.transAxes,
-    color='black', linewidth=0.8, linestyle='--'
-)
-
+con1 = ConnectionPatch(xyA=(beira_x1, beira_y1), coordsA=ax_main.transData, xyB=(0, 1), 
+                       coordsB=ax_beira.transAxes, color='black', linewidth=0.8, linestyle='--')
 # Connect bottom-right corner of box to bottom-left of Beira subplot
-con2 = ConnectionPatch(
-    xyA=(beira_x1, beira_y0), coordsA=ax_main.transData,
-    xyB=(0, 0), coordsB=ax_beira.transAxes,
-    color='black', linewidth=0.8, linestyle='--'
-)
-
+con2 = ConnectionPatch(xyA=(beira_x1, beira_y0), coordsA=ax_main.transData, xyB=(0, 0), 
+                       coordsB=ax_beira.transAxes, color='black', linewidth=0.8, linestyle='--')
 fig.add_artist(con1)
 fig.add_artist(con2)
 
-
 # --- BUZI CONNECTIONS ---
 buzi_x0, buzi_x1, buzi_y0, buzi_y1 = buzi_extent_utm
-
 # Top-right corner of Buzi box → top-left of Buzi subplot
-con3 = ConnectionPatch(
-    xyA=(buzi_x1, buzi_y1), coordsA=ax_main.transData,
-    xyB=(0, 1), coordsB=ax_buzi.transAxes,
-    color='black', linewidth=0.8, linestyle='--'
-)
-
+con3 = ConnectionPatch(xyA=(buzi_x1, buzi_y1), coordsA=ax_main.transData, 
+                       xyB=(0, 1), coordsB=ax_buzi.transAxes, color='black', linewidth=0.8, 
+                       linestyle='--')
 # Bottom-right corner of Buzi box → bottom-left of Buzi subplot
-con4 = ConnectionPatch(
-    xyA=(buzi_x1, buzi_y0), coordsA=ax_main.transData,
-    xyB=(0, 0), coordsB=ax_buzi.transAxes,
-    color='black', linewidth=0.8, linestyle='--'
-)
-
+con4 = ConnectionPatch(xyA=(buzi_x1, buzi_y0), coordsA=ax_main.transData, xyB=(0, 0), 
+                       coordsB=ax_buzi.transAxes, color='black', linewidth=0.8, linestyle='--')
 fig.add_artist(con3)
 fig.add_artist(con4)
 
-# fig.savefig("figures/fS06.png", dpi=300, bbox_inches='tight')
-# fig.savefig("figures/fS06.pdf", dpi=300, bbox_inches='tight')
+# fig.savefig("../figures/fS06.png", dpi=300, bbox_inches='tight')
+# fig.savefig("../figures/fS06.pdf", dpi=300, bbox_inches='tight')
 
 plt.show()
 
-
-
-
-# # ============================================================================================== # 
-# # =================== Plot the flood depth per exposed population spatially ==================== #
-# # ============================================================================================== #
-# # Plot average flood depth per exposed population cell
-# fig, axes = plt.subplots(1, 3, figsize=(18, 6), sharey=True) # 10,6
-
-# # Plot average flood depth among exposed population
-# gdf_2020_F = gdf_pop_2020_exposed_F_coarse.copy()
-# gdf_2020_F.loc[gdf_2020_F["exposed_population"] <= 0, "avg_flood_depth"] = np.nan
-
-# gdf_2020_CF = gdf_pop_2020_exposed_CF_coarse.copy()
-# gdf_2020_CF.loc[gdf_2020_CF["exposed_population"] <= 0, "avg_flood_depth"] = np.nan
-
-# gdf_2020_CF['change_in_flood_depth'] = gdf_2020_F['avg_flood_depth'] - gdf_2020_CF['avg_flood_depth']
-
-# # Define colormap: from white to #67CBE4
-# cmap = mcolors.LinearSegmentedColormap.from_list("white_to_blue", ["#ffffff", "#67CBE4"])
-# cmap_change = mcolors.LinearSegmentedColormap.from_list("white_to_blue", ["#ffffff", "#651F94"])
-
-# plot = gdf_2020_F.plot(column="avg_flood_depth", cmap=cmap, vmin=0, vmax=3.5, linewidth=0.1, 
-#                 edgecolor="grey", ax=axes[0], zorder=2,
-#                 missing_kwds={"color": "none", "edgecolor": "none"})
-
-# plot = gdf_2020_CF.plot(column="avg_flood_depth", cmap=cmap, vmin=0, vmax=3.5, linewidth=0.1, 
-#                 edgecolor="grey", ax=axes[1], zorder=2,
-#                 missing_kwds={"color": "none", "edgecolor": "none"})
-
-# plot = gdf_2020_CF.plot(column="change_in_flood_depth", cmap=cmap_change, vmin=0, vmax=0.5, linewidth=0.1, 
-#                 edgecolor="grey", ax=axes[2], zorder=2,
-#                 missing_kwds={"color": "none", "edgecolor": "none"})
-
-# xmin, xmax, ymin, ymax = flood_extent
-# for i, ax in enumerate(axes):
-#     background_utm.plot(ax=ax, color='#E0E0E0', zorder=0)
-#     bg_filtered_utm.boundary.plot(ax=ax, color="#B0B0B0", linewidth=0.5, zorder=1)
-#     region_utm.boundary.plot(ax=ax, color='black', linewidth=0.5, zorder=2)
-#     ax.set_xlim(xmin, xmax)
-#     ax.set_ylim(ymin, ymax)
-
-# for i, ax in enumerate(axes[:2]):
-#     sm = ScalarMappable(cmap=cmap, norm=plt.Normalize(vmin=0, vmax=3.5))
-#     sm._A = []  
-#     cbar = plt.colorbar(sm, ax=ax, shrink=0.8)
-#     cbar.set_label("Average flood depth among exposed population (m)")
-
-# sm = ScalarMappable(cmap=cmap_change, norm=plt.Normalize(vmin=0, vmax=0.5))
-# sm._A = []  
-# cbar = plt.colorbar(sm, ax=axes[2], shrink=0.8)
-# cbar.set_label("Difference in Average flood depth \namong exposed population (m)")
-
-# axes[0].set_title("Factual", fontsize=10)
-# axes[1].set_title("No Climate Change", fontsize=10)
-# axes[2].set_title("Factual - Counterfactual", fontsize=10)
-
-# axes[0].set_ylabel("y coordinate UTM zone 36S [m]")
-# axes[0].set_xlabel("x coordinate UTM zone 36S [m]")
-# axes[1].set_xlabel("x coordinate UTM zone 36S [m]")
-# axes[2].set_xlabel("x coordinate UTM zone 36S [m]")
-
-# fig.suptitle("Average flood depth among exposed population", fontsize=12)
-
-# plt.tight_layout()
-# plt.show()
-
-#%% ============================================================================================ # 
-# ============================= Plot the change in population spatially ======================== #
-# ============================================================================================== #
-# Plot average flood depth per exposed population cell
-# fig, axes = plt.subplots(1, 3, figsize=(18, 6), sharey=True) # 10,6
-
-# gdf_2019_F = gdf_pop_2019_exposed_F_coarse.copy()
-# gdf_2019_F.loc[gdf_2019_F["total_population"] == 0] = np.nan
-
-# gdf_1990_F = gdf_pop_1990_exposed_F_coarse.copy()
-# gdf_1990_F.loc[gdf_1990_F["total_population"] == 0] = np.nan
-
-# gdf_1990_F['change_in_population'] = gdf_2019_F['total_population'] - gdf_1990_F['total_population']
-
-# subplot_labels = ['(a)', '(b)', '(c)']
-# # Define colormap: from white to #67CBE4
-# cmap = mcolors.LinearSegmentedColormap.from_list("white_to_blue", ["#ffffff", "#FC6F37"])
-# norm = PowerNorm(gamma=0.5, vmin=0, vmax=np.nanmax(gdf_pop_2019_exposed_F_coarse['total_population']))  
-# cmap_change = mcolors.LinearSegmentedColormap.from_list("white_to_blue", ["#ffffff", "#BD2A2A"])
-# norm_change = PowerNorm(gamma=0.5, vmin=0, vmax=np.nanmax(gdf_1990_F['change_in_population']))
-
-# plot = gdf_2019_F.plot(column="total_population", cmap=cmap, norm=norm ,
-#                        linewidth=0.1, edgecolor="grey", ax=axes[0], zorder=2, missing_kwds={"color": "none", "edgecolor": "none"})
-
-# plot = gdf_1990_F.plot(column="total_population", cmap=cmap, norm=norm,
-#                         linewidth=0.1, edgecolor="grey", ax=axes[1], zorder=2, missing_kwds={"color": "none", "edgecolor": "none"})
-
-# plot = gdf_1990_F.plot(column="change_in_population", cmap=cmap_change, norm=norm_change,
-#                        linewidth=0.1, edgecolor="grey", ax=axes[2], zorder=2, missing_kwds={"color": "none", "edgecolor": "none"})
-
-# for ax in axes:
-#     region.boundary.plot(ax=ax, color='black', linewidth=1)
-
-# xmin, xmax, ymin, ymax = flood_extent
-# for i, ax in enumerate(axes):
-#     background_utm.plot(ax=ax, color='#E0E0E0', zorder=0)
-#     bg_filtered_utm.boundary.plot(ax=ax, color="#B0B0B0", linewidth=0.5, zorder=1)
-#     region_utm.boundary.plot(ax=ax, color='black', linewidth=0.5, zorder=2)
-#     ax.set_xlim(xmin, xmax)
-#     ax.set_ylim(ymin, ymax)
-#     ax.text(0, 1.02, subplot_labels[i], transform=ax.transAxes,
-#             fontsize=10, fontweight='bold', va='bottom', ha='left')
-
-# for i, ax in enumerate(axes[:2]):
-#     sm = ScalarMappable(cmap=cmap, norm=norm)
-#     sm._A = []  
-#     cbar = plt.colorbar(sm, ax=ax, shrink=0.8)
-#     cbar.set_label("Population (people per cell)")
-
-# sm = ScalarMappable(cmap=cmap_change, norm=norm_change)
-# sm._A = []  
-# cbar = plt.colorbar(sm, ax=axes[2], shrink=0.8)
-# cbar.set_label("Difference in population (people per cell)")
-
-# axes[0].set_title("Factual", fontsize=10)
-# axes[1].set_title("No population growth", fontsize=10)
-# axes[2].set_title("Factual - Counterfactual", fontsize=10)
-
-# axes[0].set_ylabel("y coordinate UTM zone 36S [m]")
-# axes[0].set_xlabel("x coordinate UTM zone 36S [m]")
-# axes[1].set_xlabel("x coordinate UTM zone 36S [m]")
-# axes[2].set_xlabel("x coordinate UTM zone 36S [m]")
-
-# fig.suptitle("Total population in study region", fontsize=12)
-
-# plt.tight_layout()
-# plt.show()
-
-
-#%% ============================================================================================ # 
-# ================ Plot the diff in uniform and spatial change in population =================== #
-# ============================================================================================== #
-# Plot average flood depth per exposed population cell
-# fig, axes = plt.subplots(1, 3, figsize=(16, 6), sharey=True, constrained_layout=True)
-
-# gdf_2019_F = gdf_pop_2019_exposed_F_coarse.copy()
-# gdf_2019_F.loc[gdf_2019_F["total_population"] == 0] = np.nan
-
-# gdf_2019_F_uni = gdf_pop_2019_exposed_F_uniform_coarse.copy()
-# gdf_2019_F_uni.loc[gdf_2019_F_uni["total_population"] == 0] = np.nan
-
-# gdf_2019_F_uni['change_in_population'] = gdf_2019_F_uni['total_population'] - gdf_2019_F['total_population']
-
-# # Define colormap: from white to #67CBE4
-# cmap = mcolors.LinearSegmentedColormap.from_list("white_to_orange", ["#ffffff", "#651F94"])
-# norm = PowerNorm(gamma=0.5, vmin=0, vmax=np.nanmax(gdf_pop_2019_exposed_F_coarse['total_population']))  
-# cmap_change = plt.get_cmap('RdBu_r')
-# norm_change = mcolors.TwoSlopeNorm(vmin=np.nanmin(gdf_2019_F_uni['change_in_population']),
-#                                    vcenter=0,
-#                                    vmax=np.nanmax(gdf_2019_F_uni['change_in_population']))
-
-# plot = gdf_2019_F.plot(column="total_population", cmap=cmap, norm=norm ,
-#                        linewidth=0.1, edgecolor="grey", ax=axes[0], zorder=2, missing_kwds={"color": "none", "edgecolor": "none"})
-
-# plot = gdf_2019_F_uni.plot(column="total_population", cmap=cmap, norm=norm,
-#                         linewidth=0.1, edgecolor="grey", ax=axes[1], zorder=2, missing_kwds={"color": "none", "edgecolor": "none"})
-
-# plot = gdf_2019_F_uni.plot(column="change_in_population", cmap=cmap_change, norm=norm_change,
-#                        linewidth=0.1, edgecolor="grey", ax=axes[2], zorder=2, missing_kwds={"color": "none", "edgecolor": "none"})
-
-# for ax in axes:
-#     region.boundary.plot(ax=ax, color='black', linewidth=1)
-
-# xmin, xmax, ymin, ymax = flood_extent
-# for i, ax in enumerate(axes):
-#     background_utm.plot(ax=ax, color='#E0E0E0', zorder=0)
-#     bg_filtered_utm.boundary.plot(ax=ax, color="#B0B0B0", linewidth=0.5, zorder=1)
-#     region_utm.boundary.plot(ax=ax, color='black', linewidth=0.5, zorder=2)
-#     ax.set_xlim(xmin, xmax)
-#     ax.set_ylim(ymin, ymax)
-
-# # --- Population colorbar spanning axes[0] and axes[1]
-# sm_pop = ScalarMappable(cmap=cmap, norm=norm)
-# sm_pop._A = []
-
-# cbar_pop = fig.colorbar(sm_pop, ax=[axes[0], axes[1]], shrink=0.8, pad=0.02)
-# cbar_pop.set_label("Population (people per cell)")
-
-# # --- Difference colorbar for axis[2] only
-# sm_change = ScalarMappable(cmap=cmap_change, norm=norm_change)
-# sm_change._A = []
-
-# cbar_change = fig.colorbar(sm_change, ax=axes[2], shrink=0.8, pad=0.02)
-# cbar_change.set_label("Difference in population (people per cell)")
-
-# axes[0].set_title("Factual 2019 population", fontsize=10)
-# axes[1].set_title("Uniform growth 2019 population", fontsize=10)
-# axes[2].set_title("Uniform growth - Factual", fontsize=10)
-
-# axes[0].set_ylabel("y coordinate UTM zone 36S [m]")
-# axes[0].set_xlabel("x coordinate UTM zone 36S [m]")
-# axes[1].set_xlabel("x coordinate UTM zone 36S [m]")
-# axes[2].set_xlabel("x coordinate UTM zone 36S [m]")
-
-# fig.suptitle("Total population in study region", fontsize=12)
-
-# plt.show()
-
-
-#%%
-# Do the same but zoom into Beira for the 25 m resolution rasters
-# bbox in raster CRS
-# xmin, xmax = 690000, 702000
-# ymin, ymax = 7803000, 7818000
-
-# # Use rowcol safely
-# row_ul, col_ul = rowcol(flood_grid_transform, xmin, ymax, op=int)  # upper-left
-# row_lr, col_lr = rowcol(flood_grid_transform, xmax, ymin, op=int)  # lower-right
-
-# # Clip indices to raster shape
-# row_min = max(0, min(row_ul, row_lr))
-# row_max = min(ra_exposed_pop_2020_F.shape[0], max(row_ul, row_lr))
-# col_min = max(0, min(col_ul, col_lr))
-# col_max = min(ra_exposed_pop_2020_F.shape[1], max(col_ul, col_lr))
-
-# print("Row indices:", row_min, row_max)
-# print("Col indices:", col_min, col_max)
-
-# # Compute coordinates of the clipped raster edges
-# x_min_clip, y_max_clip = flood_grid_transform * (col_min, row_min)  # top-left
-# x_max_clip, y_min_clip = flood_grid_transform * (col_max, row_max)  # bottom-right
-
-# extent_beira = [x_min_clip, x_max_clip, y_max_clip, y_min_clip]
-# print("Beira extent:", extent_beira)
-
-# # Slice raster
-# raster_F_beira_pop    = pop_arrays[2020][row_min:row_max, col_min:col_max]
-# raster_UF_beira_pop   = pop_array_uniform_2020[row_min:row_max, col_min:col_max]
-# pop_diff_UG_beira_pop = raster_UF_beira_pop - raster_F_beira_pop
-
-# raster_F_beira_exposed    = ra_exposed_pop_2020_F[row_min:row_max, col_min:col_max]
-# raster_UF_beira_exposed   = ra_exposed_pop_2020_F_uniform[row_min:row_max, col_min:col_max]
-# pop_diff_UG_beira_exposed = raster_UF_beira_exposed - raster_F_beira_exposed
-
-# print("Clipped raster shape:", raster_F_beira_exposed.shape)
-
-
-# # Plotting
-# fig, axes = plt.subplots(2, 3, figsize=(16, 12), sharex=True, sharey=True, dpi=300, constrained_layout=True)
-
-# for i, ax in enumerate(axes.flatten()):
-#     background_utm.plot(ax=ax, color='#E0E0E0', zorder=0)
-#     bg_filtered_utm.boundary.plot(ax=ax, color="#B0B0B0", linewidth=0.5, zorder=1)
-#     region_utm.boundary.plot(ax=ax, color='black', linewidth=1, zorder=2)
-
-# # --- Population colormap ---
-# cmap_white_orange = mcolors.LinearSegmentedColormap.from_list("white_to_orange", ["#ffffff", "#651F94"])
-# pop_bins = np.arange(0, np.nanmax(raster_F_beira_pop)+1, 1) 
-# pop_colors = cmap_white_orange(np.linspace(0, 1, len(pop_bins)-1))
-# pop_colors[0] = [1, 1, 1, 0]  # RGBA
-# pop_cmap_discrete = mcolors.ListedColormap(pop_colors)
-# pop_norm = BoundaryNorm(pop_bins, pop_cmap_discrete.N, extend='neither')
-
-# # --- Exposed population colormap ---
-# pop_bins = np.arange(0, np.nanmax(raster_F_beira_exposed)+1, 1)
-# pop_colors = plt.cm.Blues(np.linspace(0, 1, len(pop_bins)-1))
-# pop_colors[0] = [1, 1, 1, 0]  # RGBA
-# pop_affc_cmap_discrete = mcolors.ListedColormap(pop_colors)
-# pop_affc_norm = BoundaryNorm(pop_bins, pop_affc_cmap_discrete.N, extend='neither')
-
-# # --- Difference colormap population ---
-# vmax_ug = np.nanmax(pop_diff_UG_beira_pop)
-# diff_bins = np.arange(-int(vmax_ug), int(vmax_ug)+1, 1)  # integer steps
-# diff_colors = plt.cm.RdBu_r(np.linspace(0, 1, len(diff_bins)-1))
-# mid_idx = np.where(diff_bins[:-1] == 0)[0]
-# if len(mid_idx) > 0:
-#     diff_colors[mid_idx[0]] = [1, 1, 1, 0]
-# diff_cmap_discrete = mcolors.ListedColormap(diff_colors)
-# diff_norm = BoundaryNorm(diff_bins, diff_cmap_discrete.N, extend='neither')
-
-# # --- Difference colormap exposed ---
-# vmax_ug = np.nanmax(pop_diff_UG_beira_exposed)
-# diff_bins = np.arange(-int(vmax_ug), int(vmax_ug)+1, 1)  # integer steps
-# diff_colors = plt.cm.RdBu_r(np.linspace(0, 1, len(diff_bins)-1))
-# mid_idx = np.where(diff_bins[:-1] == 0)[0]
-# if len(mid_idx) > 0:
-#     diff_colors[mid_idx[0]] = [1, 1, 1, 0]
-# diff_affc_cmap_discrete = mcolors.ListedColormap(diff_colors)
-# diff_affc_norm = BoundaryNorm(diff_bins, diff_affc_cmap_discrete.N, extend='neither')
-
-# # --- TOP ROW ---
-# # Population change effect
-# im = axes[0,0].imshow(raster_F_beira_pop, cmap=pop_cmap_discrete, norm=pop_norm,
-#                       extent=extent_beira, origin='lower', alpha=0.8, zorder=3)
-# axes[0,0].set_title("Factual 2019 Population")
-
-# im = axes[0,1].imshow(raster_UF_beira_pop, cmap=pop_cmap_discrete, norm=pop_norm,
-#                       extent=extent_beira, origin='lower', alpha=0.8, zorder=3)
-# cbar = plt.colorbar(im, ax=axes[0,1], shrink=0.8)
-# cbar.set_label("Exposed population")
-# axes[0,1].set_title("Uniform 2019 Population")
-
-# im = axes[0,2].imshow(pop_diff_UG_beira_pop, cmap=diff_cmap_discrete, norm=diff_norm,
-#                       extent=extent_beira, origin='lower', alpha=0.8, zorder=3)
-# cbar = plt.colorbar(im, ax=axes[0,2], shrink=0.8)
-# cbar.set_label("Difference in population")
-# axes[0,2].set_title("Uniform - Factual population")
-
-# # # --- BOTTOM ROW --
-# # Population change effect
-# im = axes[1,0].imshow(raster_F_beira_exposed, cmap=pop_affc_cmap_discrete, norm=pop_affc_norm,
-#                       extent=extent_beira, origin='lower', alpha=0.8, zorder=3)
-# axes[1,0].set_title("Factual exposed population")
-
-# im = axes[1,1].imshow(raster_UF_beira_exposed, cmap=pop_affc_cmap_discrete, norm=pop_affc_norm,
-#                       extent=extent_beira, origin='lower', alpha=0.8, zorder=3)
-# cbar = plt.colorbar(im, ax=axes[1,1], shrink=0.8)
-# cbar.set_label("Exposed population per 25 m grid cell")
-# axes[1,1].set_title("Factual exposed population Uniform")
-# im = axes[1,2].imshow(pop_diff_UG_beira_exposed, cmap=diff_affc_cmap_discrete, norm=diff_affc_norm,
-#                       extent=extent_beira, origin='lower', alpha=0.8, zorder=3)
-# cbar = plt.colorbar(im, ax=axes[1,2], shrink=0.8)
-# cbar.set_label("Difference in exposed population")
-# axes[1,2].set_title("Uniform - Factual exposed population")
-
-# axes[0,0].set_ylabel("y coordinate UTM zone 36S [m]")
-# axes[1,0].set_ylabel("y coordinate UTM zone 36S [m]")
-# axes[1,0].set_xlabel("x coordinate UTM zone 36S [m]")
-# axes[1,1].set_xlabel("x coordinate UTM zone 36S [m]")
-# axes[1,2].set_xlabel("x coordinate UTM zone 36S [m]")
-
-# fig.suptitle("Uniform vs. spatially differing population growth", fontsize=14)
-
-# plt.show()
-
-
-
-#%% ============================================================================================ # 
-# =============== Plot the change in exposed population > 1.5 m flood depth spatially ============ #
-# ============================================================================================== #
-# # Plot average flood depth per exposed population cell
-# fig, axes = plt.subplots(1, 3, figsize=(18, 6), sharey=True) # 10,6
-
-# # Plot average flood depth among exposed population
-# gdf_2019_F = gdf_pop_2019_exposed_F_coarse.copy()
-# gdf_2019_F.loc[gdf_2019_F["relative_population"] <= 1.5, "avg_flood_depth"] = np.nan
-
-# gdf_2019_CF = gdf_pop_2019_exposed_CF_coarse.copy()
-# gdf_2019_CF.loc[gdf_2019_CF["relative_population"] <= 1.5, "avg_flood_depth"] = np.nan
-
-# gdf_2019_CF['change_in_relative_population_>1m'] = gdf_2019_F['relative_population'] - gdf_2019_CF['relative_population']
-
-# # Define colormap: from white to #67CBE4
-# cmap = 'Blues'
-# norm = PowerNorm(gamma=0.5, vmin=0, vmax=np.nanmax(gdf_2019_F['relative_population']))
-# cmap_change = mcolors.LinearSegmentedColormap.from_list("white_to_blue", ["#ffffff", "#651F94"])
-# norm_change = PowerNorm(gamma=0.5, vmin=0, vmax=np.nanmax(gdf_2019_CF['change_in_relative_population_>1m']))
-
-# plot = gdf_2019_F.plot(column="relative_population", cmap=cmap, norm=norm, linewidth=0.1, 
-#                 edgecolor="grey", ax=axes[0], zorder=2,
-#                 missing_kwds={"color": "none", "edgecolor": "none"})
-
-# plot = gdf_2019_CF.plot(column="relative_population", cmap=cmap, norm=norm, linewidth=0.1, 
-#                 edgecolor="grey", ax=axes[1], zorder=2,
-#                 missing_kwds={"color": "none", "edgecolor": "none"})
-
-# plot = gdf_2019_CF.plot(column="change_in_relative_population_>1m", cmap=cmap_change, norm=norm_change, linewidth=0.1, 
-#                 edgecolor="grey", ax=axes[2], zorder=2,
-#                 missing_kwds={"color": "none", "edgecolor": "none"})
-
-# xmin, xmax, ymin, ymax = flood_extent
-# for i, ax in enumerate(axes):
-#     background_utm.plot(ax=ax, color='#E0E0E0', zorder=0)
-#     bg_filtered_utm.boundary.plot(ax=ax, color="#B0B0B0", linewidth=0.5, zorder=1)
-#     region_utm.boundary.plot(ax=ax, color='black', linewidth=0.5, zorder=2)
-#     ax.set_xlim(xmin, xmax)
-#     ax.set_ylim(ymin, ymax)
-
-# for i, ax in enumerate(axes[:2]):
-#     sm = ScalarMappable(cmap=cmap, norm=norm)
-#     sm._A = []  
-#     cbar = plt.colorbar(sm, ax=ax, shrink=0.8)
-#     cbar.set_label("Exposed population > 1.5 m flood depth")
-
-# sm = ScalarMappable(cmap=cmap_change, norm=norm_change)
-# sm._A = []  
-# cbar = plt.colorbar(sm, ax=axes[2], shrink=0.8)
-# cbar.set_label("Difference in relative xposed population > 1.5 m flood depth")
-
-# axes[0].set_title("Factual", fontsize=10)
-# axes[1].set_title("No Climate Change", fontsize=10)
-# axes[2].set_title("Factual - Counterfactual", fontsize=10)
-
-# axes[0].set_ylabel("y coordinate UTM zone 36S [m]")
-# axes[0].set_xlabel("x coordinate UTM zone 36S [m]")
-# axes[1].set_xlabel("x coordinate UTM zone 36S [m]")
-# axes[2].set_xlabel("x coordinate UTM zone 36S [m]")
-
-# fig.suptitle("Population exposed to > 1.5 m flood depth", fontsize=12)
-
-# plt.tight_layout()
-# plt.show()
-
-#%% ============================================================================================ # 
-# ===================== Plotting attributable % exposed to flood depth > 1.5 m ================= #
-# ============================================================================================== #
-# # Plot average flood depth per exposed population cell
-# fig, axes = plt.subplots(1, 3, figsize=(18, 6), sharey=True) # 10,6
-
-# # Plot average flood depth among exposed population
-# gdf_2020_F = gdf_pop_2020_exposed_F_coarse.copy()
-# gdf_2020_F.loc[gdf_2020_F["avg_flood_depth"] == 0, "exposed_population"] = 0
-
-# gdf_2020_CF = gdf_pop_2020_exposed_CF_coarse.copy()
-# gdf_2020_CF.loc[gdf_2020_CF["avg_flood_depth"] == 0, "exposed_population"] = 0
-
-# gdf_2020_CF['pect_change_in_exposed_population_>1.5m'] = (gdf_2020_F['exposed_population'] - gdf_2020_CF['exposed_population']) / gdf_2020_F['exposed_population'] * 100
-# # Define colormap: from white to #67CBE4
-# cmap = 'Blues'
-# norm = PowerNorm(gamma=0.5, vmin=0, vmax=np.nanmax(gdf_2020_F['exposed_population']))
-# cmap_change = mcolors.LinearSegmentedColormap.from_list("white_to_blue", ["#ffffff", "#651F94"])
-# norm_change = PowerNorm(gamma=0.5, vmin=0, vmax=np.nanmax(gdf_2020_CF['pect_change_in_exposed_population_>1.5m']))
-
-# plot = gdf_2020_F.plot(column="exposed_population", cmap=cmap, norm=norm, linewidth=0.1, 
-#                 edgecolor="grey", ax=axes[0], zorder=2,
-#                 missing_kwds={"color": "none", "edgecolor": "none"})
-
-# plot = gdf_2020_CF.plot(column="exposed_population", cmap=cmap, norm=norm, linewidth=0.1, 
-#                 edgecolor="grey", ax=axes[1], zorder=2,
-#                 missing_kwds={"color": "none", "edgecolor": "none"})
-
-# plot = gdf_2020_CF.plot(column="pect_change_in_exposed_population_>1.5m", cmap=cmap_change, norm=norm_change, linewidth=0.1, 
-#                 edgecolor="grey", ax=axes[2], zorder=2,
-#                 missing_kwds={"color": "none", "edgecolor": "none"})
-
-# xmin, xmax, ymin, ymax = flood_extent
-# for i, ax in enumerate(axes):
-#     background_utm.plot(ax=ax, color='#E0E0E0', zorder=0)
-#     bg_filtered_utm.boundary.plot(ax=ax, color="#B0B0B0", linewidth=0.5, zorder=1)
-#     region_utm.boundary.plot(ax=ax, color='black', linewidth=0.5, zorder=2)
-#     ax.set_xlim(xmin, xmax)
-#     ax.set_ylim(ymin, ymax)
-
-# for i, ax in enumerate(axes[:2]):
-#     sm = ScalarMappable(cmap=cmap, norm=norm)
-#     sm._A = []  
-#     cbar = plt.colorbar(sm, ax=ax, shrink=0.8)
-#     cbar.set_label("Exposed population")
-
-# sm = ScalarMappable(cmap=cmap_change, norm=norm_change)
-# sm._A = []  
-# cbar = plt.colorbar(sm, ax=axes[2], shrink=0.8)
-# cbar.set_label("Attributable exposed population")
-
-# axes[0].set_title("Factual", fontsize=10)
-# axes[1].set_title("No Climate Change", fontsize=10)
-# axes[2].set_title("(F - CF) / F * 100%", fontsize=10)
-
-# axes[0].set_ylabel("y coordinate UTM zone 36S [m]")
-# axes[0].set_xlabel("x coordinate UTM zone 36S [m]")
-# axes[1].set_xlabel("x coordinate UTM zone 36S [m]")
-# axes[2].set_xlabel("x coordinate UTM zone 36S [m]")
-
-# fig.suptitle("Total exposed population", fontsize=12)
-
-# plt.tight_layout()
-# plt.show()
-
-
-# #%% =============================================================================================
-# # === Plot change of flood depth among exposed population per flood depth category spatially ====
-# # ===============================================================================================
-# # Plot average flood depth per exposed population cell
-# fig, axes = plt.subplots(1, 2, figsize=(10, 6), sharey=True) # 10,6
-
-# # Plot average flood depth among exposed population
-# gdf_2019_F = gdf_pop_2019_exposed_F_coarse.copy()
-# gdf_2019_F.loc[gdf_2019_F["avg_flood_depth"] == 0, "exposed_population"] = 0
-
-# gdf_2019_F['exposed_population_high_flooddepth']     = gdf_2019_F.apply(lambda row: row['exposed_population'] if row['avg_flood_depth'] > 1.5 else 0, axis=1)
-# gdf_2019_F['exposed_population_moderate_flooddepth'] = gdf_2019_F.apply(lambda row: row['exposed_population'] if 0.5 <= row['avg_flood_depth'] <= 1.5 else 0, axis=1) 
-# gdf_2019_F['exposed_population_low_flooddepth']      = gdf_2019_F.apply(lambda row: row['exposed_population'] if row['avg_flood_depth'] < 0.5 else 0, axis=1)
-
-# gdf_2019_CF = gdf_pop_2019_exposed_CF_coarse.copy()
-# gdf_2019_CF.loc[gdf_2019_CF["avg_flood_depth"] == 0, "exposed_population"] = 0
-
-# gdf_2019_CF['exposed_population_high_flooddepth']     = gdf_2019_CF.apply(lambda row: row['exposed_population'] if row['avg_flood_depth'] > 1.5 else 0, axis=1)
-# gdf_2019_CF['exposed_population_moderate_flooddepth'] = gdf_2019_CF.apply(lambda row: row['exposed_population'] if 0.5 <= row['avg_flood_depth'] <= 1.5 else 0, axis=1) 
-# gdf_2019_CF['exposed_population_low_flooddepth']      = gdf_2019_CF.apply(lambda row: row['exposed_population'] if row['avg_flood_depth'] < 0.5 else 0, axis=1)
-
-# def depth_category(depth):
-#     if depth > 1.5:
-#         return 'high'
-#     elif depth >= 0.5:
-#         return 'moderate'
-#     elif depth > 0:
-#         return 'low'
-#     else:
-#         return 'none'
-
-# gdf_2019_F['depth_cat_F']  = gdf_2019_F['avg_flood_depth'].apply(depth_category)
-# gdf_2019_F['depth_cat_CF'] = gdf_2019_CF['avg_flood_depth'].apply(depth_category)
-
-# # Transition columns — population in cells that moved from CF category → F category
-# gdf_2019_F['exposed_population_no_change_flooddepth'] = gdf_2019_F.apply(
-#     lambda row: row['exposed_population'] if row['depth_cat_CF'] == row['depth_cat_F'] else 0, axis=1)
-
-# gdf_2019_F['exposed_population_none_to_low_flooddepth'] = gdf_2019_F.apply(
-#     lambda row: row['exposed_population'] if row['depth_cat_CF'] == 'none' and row['depth_cat_F'] == 'low' else 0, axis=1)
-
-# gdf_2019_F['exposed_population_low_to_moderate_flooddepth'] = gdf_2019_F.apply(
-#     lambda row: row['exposed_population'] if row['depth_cat_CF'] == 'low' and row['depth_cat_F'] == 'moderate' else 0, axis=1)
-
-# gdf_2019_F['exposed_population_low_to_high_flooddepth'] = gdf_2019_F.apply(
-#     lambda row: row['exposed_population'] if row['depth_cat_CF'] == 'low' and row['depth_cat_F'] == 'high' else 0, axis=1)
-
-# gdf_2019_F['exposed_population_moderate_to_high_flooddepth'] = gdf_2019_F.apply(
-#     lambda row: row['exposed_population'] if row['depth_cat_CF'] == 'moderate' and row['depth_cat_F'] == 'high' else 0, axis=1)
-
-# # Define colormap: from white to #67CBE4
-# cmap = 'Blues'
-# norm = PowerNorm(gamma=0.5, vmin=0, vmax=np.nanmax(gdf_2019_F['exposed_population']))
-# cmap_change = mcolors.LinearSegmentedColormap.from_list("white_to_blue", ["#ffffff", "#651F94"])
-# norm_change = PowerNorm(gamma=0.5, vmin=0, vmax=np.nanmax(gdf_2019_CF['exposed_population_high_flooddepth']))
-
-# plot = gdf_2019_F.plot(column="exposed_population", cmap=cmap, norm=norm, linewidth=0.1, 
-#                 edgecolor="grey", ax=axes[0], zorder=2,
-#                 missing_kwds={"color": "none", "edgecolor": "none"})
-
-# plot = gdf_2019_CF.plot(column="exposed_population", cmap=cmap, norm=norm, linewidth=0.1, 
-#                 edgecolor="grey", ax=axes[1], zorder=2,
-#                 missing_kwds={"color": "none", "edgecolor": "none"})
-
-# plot = gdf_2019_CF.plot(column="exposed_population_high_flooddepth", cmap=cmap_change, norm=norm_change, linewidth=0.1, 
-#                 edgecolor="grey", ax=axes[2], zorder=2,
-#                 missing_kwds={"color": "none", "edgecolor": "none"})
-
-# xmin, xmax, ymin, ymax = flood_extent
-# for i, ax in enumerate(axes):
-#     background_utm.plot(ax=ax, color='#E0E0E0', zorder=0)
-#     bg_filtered_utm.boundary.plot(ax=ax, color="#B0B0B0", linewidth=0.5, zorder=1)
-#     region_utm.boundary.plot(ax=ax, color='black', linewidth=0.5, zorder=2)
-#     ax.set_xlim(xmin, xmax)
-#     ax.set_ylim(ymin, ymax)
-
-# for i, ax in enumerate(axes[:2]):
-#     sm = ScalarMappable(cmap=cmap, norm=norm)
-#     sm._A = []  
-#     cbar = plt.colorbar(sm, ax=ax, shrink=0.8)
-#     cbar.set_label("Exposed population")
-
-# sm = ScalarMappable(cmap=cmap_change, norm=norm_change)
-# sm._A = []  
-# cbar = plt.colorbar(sm, ax=axes[2], shrink=0.8)
-# cbar.set_label("Attributable exposed population")
-
-# axes[0].set_title("Factual", fontsize=10)
-# axes[1].set_title("No Climate Change", fontsize=10)
-# axes[2].set_title("(F - CF) / F * 100%", fontsize=10)
-
-# axes[0].set_ylabel("y coordinate UTM zone 36S [m]")
-# axes[0].set_xlabel("x coordinate UTM zone 36S [m]")
-# axes[1].set_xlabel("x coordinate UTM zone 36S [m]")
-# axes[2].set_xlabel("x coordinate UTM zone 36S [m]")
-
-# fig.suptitle("Total exposed population", fontsize=12)
-
-# plt.tight_layout()
-# plt.show()
-
-
-#%%
-# ========================================================================================================== #
-# =============== Plotting change in flood depth category among exposed population spatially =============== #
-# ========================================================================================================== #
-# fig, axes = plt.subplots(1, 2, figsize=(14, 6), sharey=True)
-
-# # --- Prep factual GDF ---
-# gdf_2020_F = gdf_pop_2020_exposed_F_coarse.copy()
-# gdf_2020_F.loc[gdf_2020_F["avg_flood_depth"] == 0, "exposed_population"] = 0
-
-# gdf_2020_CF = gdf_pop_2020_exposed_CF_coarse.copy()
-# gdf_2020_CF.loc[gdf_2020_CF["avg_flood_depth"] == 0, "exposed_population"] = 0
-
-# # --- Depth category function ---
-# def depth_category(depth):
-#     if depth > 1.5:    return 'Very high'
-#     elif depth >= 0.5: return 'Mod-high'
-#     elif depth > 0.15: return 'Low'
-#     else:              return 'None'
-
-# gdf_2020_F['depth_cat_F']  = gdf_2020_F['avg_flood_depth'].apply(depth_category)
-# gdf_2020_F['depth_cat_CF'] = gdf_2020_CF['avg_flood_depth'].apply(depth_category)
-
-# # --- Transition category (CF → F) ---
-# def transition_category(row):
-#     cf, f = row['depth_cat_CF'], row['depth_cat_F']
-#     if row['exposed_population'] == 0:
-#         return 'None'
-#     if cf == f:
-#         return 'No change'
-#     elif cf == 'None' and f == 'Low':
-#         return 'None → Low'
-#     elif cf == 'None' and f == 'Mod-high':
-#         return 'None → Mod-high'
-#     elif cf == 'None' and f == 'Very high':
-#         return 'None → Very high'
-#     elif cf == 'Low' and f == 'Mod-high':
-#         return 'Low → Mod-high'
-#     elif cf == 'Low' and f == 'Very high':
-#         return 'Low → Very high'
-#     elif cf == 'Mod-high' and f == 'Very high':
-#         return 'Mod-high → Very high'
-#     else:
-#         return 'Other'  # e.g. depth decreased — unexpected but safe to catch
-
-# gdf_2020_F['transition_cat'] = gdf_2020_F.apply(transition_category, axis=1)
-
-# --- Color maps ---
-# depth_colors = {
-#     'none':     '#EEEEEE',
-#     'low':      '#9ECAE1',
-#     'moderate': '#3182BD',
-#     'high':     '#08306B',
-# }
-
-# transition_colors = {
-#     'none':             '#EEEEEE',
-#     'no change':        '#CCCCCC',
-#     'none → low':       '#FDD0A2',
-#     'none → moderate':  '#F16913',
-#     'none → high':      '#7F2704',
-#     'low → moderate':   '#A1D99B',
-#     'low → high':       '#238B45',
-#     'moderate → high':  '#00441B',
-#     'other':            '#AAAAAA',
-# }
-
-# # --- Subplot 1: Factual flood depth category ---
-# gdf_2020_F['depth_color'] = gdf_2020_F['depth_cat_F'].map(depth_colors)
-# gdf_2020_F.plot(color=gdf_2020_F['depth_color'], linewidth=0.1,
-#                 edgecolor='grey', ax=axes[0], zorder=2,
-#                 missing_kwds={"color": "none", "edgecolor": "none"})
-
-# # --- Subplot 2: Depth category transition (climate change effect) ---
-# gdf_2020_F['transition_color'] = gdf_2020_F['transition_cat'].map(transition_colors)
-# gdf_2020_F.plot(color=gdf_2020_F['transition_color'], linewidth=0.1,
-#                 edgecolor='grey', ax=axes[1], zorder=2,
-#                 missing_kwds={"color": "none", "edgecolor": "none"})
-
-# # --- Basemap ---
-# xmin, xmax, ymin, ymax = flood_extent
-# for ax in axes:
-#     background_utm.plot(ax=ax, color='#E0E0E0', zorder=0)
-#     bg_filtered_utm.boundary.plot(ax=ax, color="#B0B0B0", linewidth=0.5, zorder=1)
-#     region_utm.boundary.plot(ax=ax, color='black', linewidth=0.5, zorder=2)
-#     ax.set_xlim(xmin, xmax)
-#     ax.set_ylim(ymin, ymax)
-
-# # --- Legends ---
-# from matplotlib.patches import Patch
-
-# depth_legend = [Patch(facecolor=c, edgecolor='grey', label=k) for k, c in depth_colors.items() if k != 'none']
-# axes[0].legend(handles=depth_legend, title="Flood depth category", loc='lower left', fontsize=8)
-
-# transition_legend = [Patch(facecolor=c, edgecolor='grey', label=k) for k, c in transition_colors.items()
-#                      if k not in ('none', 'other')]
-# axes[1].legend(handles=transition_legend, title="Depth category change\n(CF → F)", loc='lower left', fontsize=8)
-
-# # --- Labels ---
-# axes[0].set_title("Factual flood depth category", fontsize=10)
-# axes[1].set_title("Climate change-attributed depth category shift", fontsize=10)
-# axes[0].set_ylabel("y coordinate UTM zone 36S [m]")
-# for ax in axes:
-#     ax.set_xlabel("x coordinate UTM zone 36S [m]")
-
-# fig.suptitle("Flood depth category among exposed population (2019)", fontsize=12)
-# plt.tight_layout()
-# plt.show()
-
-
-#%% ============================================================================================ # 
-# ============================= Plot % cells with flood depth > 1.5 m ============================ #
-# ============================================================================================== #
-# fig, axes = plt.subplots(1, 3, figsize=(18, 6))
-
-# # Plot average flood depth among exposed population
-# gdf_2019_F = gdf_pop_2019_exposed_F_coarse.copy()
-# gdf_2019_CF = gdf_pop_2019_exposed_CF_coarse.copy()
-
-# gdf_2019_CF['change_in_%more_1.5m'] = gdf_2019_F['pct_cells_higher_1.5m'] - gdf_2019_CF['pct_cells_higher_1.5m']
-
-# # Define colormap: from white to #67CBE4
-# cmap = 'Blues'
-# norm = PowerNorm(gamma=0.5, vmin=0, vmax=np.nanmax(gdf_2019_F['pct_cells_higher_1.5m']))
-# cmap_change = mcolors.LinearSegmentedColormap.from_list("white_to_blue", ["#ffffff", "#651F94"])
-# norm_change = PowerNorm(gamma=0.5, vmin=0, vmax=(gdf_2019_CF['change_in_%more_1.5m']).quantile(0.99))
-
-# plot = gdf_2019_F.plot(column="pct_cells_higher_1.5m", cmap=cmap, norm=norm, linewidth=0.1, 
-#                 edgecolor="grey", ax=axes[0], zorder=2,
-#                 missing_kwds={"color": "none", "edgecolor": "none"})
-
-# plot = gdf_2019_CF.plot(column="pct_cells_higher_1.5m", cmap=cmap, norm=norm, linewidth=0.1, 
-#                 edgecolor="grey", ax=axes[1], zorder=2,
-#                 missing_kwds={"color": "none", "edgecolor": "none"})
-
-# plot = gdf_2019_CF.plot(column="change_in_%more_1.5m", cmap=cmap_change, norm=norm_change, linewidth=0.1, 
-#                 edgecolor="grey", ax=axes[2], zorder=2,
-#                 missing_kwds={"color": "none", "edgecolor": "none"})
-
-# xmin, xmax, ymin, ymax = flood_extent
-# for i, ax in enumerate(axes):
-#     background_utm.plot(ax=ax, color='#E0E0E0', zorder=0)
-#     bg_filtered_utm.boundary.plot(ax=ax, color="#B0B0B0", linewidth=0.5, zorder=1)
-#     region_utm.boundary.plot(ax=ax, color='black', linewidth=0.5, zorder=2)
-#     ax.set_xlim(xmin, xmax)
-#     ax.set_ylim(ymin, ymax)
-
-# for i, ax in enumerate(axes[:2]):
-#     sm = ScalarMappable(cmap=cmap, norm=norm)
-#     sm._A = []  
-#     cbar = plt.colorbar(sm, ax=ax, shrink=0.8)
-#     cbar.set_label("% cells > 1.5 m flood depth")
-
-# sm = ScalarMappable(cmap=cmap_change, norm=norm_change)
-# sm._A = []  
-# cbar = plt.colorbar(sm, ax=axes[2], shrink=0.8)
-# cbar.set_label("Difference in % cells > 1.5 m flood depth")
-
-# axes[0].set_title("Factual", fontsize=10)
-# axes[1].set_title("No Climate Change", fontsize=10)
-# axes[2].set_title("Factual - Counterfactual", fontsize=10)
-
-# axes[0].set_ylabel("y coordinate UTM zone 36S [m]")
-# axes[0].set_xlabel("x coordinate UTM zone 36S [m]")
-# axes[1].set_xlabel("x coordinate UTM zone 36S [m]")
-# axes[2].set_xlabel("x coordinate UTM zone 36S [m]")
-
-# fig.suptitle("% cells > 1.5 m flood depth", fontsize=12)
-
-# plt.tight_layout()
-# plt.show()
-
-
-
-#%% ============================================================================================ # 
-# ================================ Plot % cells that are flooded  ============================== #
-# ============================================================================================== #
-# fig, axes = plt.subplots(1, 3, figsize=(18, 6))
-
-# # Plot average flood depth among exposed population
-# gdf_2019_F = gdf_pop_2020_exposed_F_coarse.copy()
-# gdf_2019_CF = gdf_pop_2020_exposed_CF_coarse.copy()
-
-# gdf_2019_CF['change_in_%_cells_flooded'] = gdf_2019_F['pct_cells_flooded'] - gdf_2019_CF['pct_cells_flooded']
-
-# # Define colormap: from white to #67CBE4
-# cmap = 'Blues'
-# norm = PowerNorm(gamma=0.5, vmin=0, vmax=np.nanmax(gdf_2019_F['pct_cells_flooded']))
-# cmap_change = mcolors.LinearSegmentedColormap.from_list("white_to_blue", ["#ffffff", "#651F94"])
-# norm_change = PowerNorm(gamma=0.5, vmin=0, vmax=(gdf_2019_CF['change_in_%_cells_flooded']).quantile(0.99))
-
-# plot = gdf_2019_F.plot(column="pct_cells_flooded", cmap=cmap, norm=norm, linewidth=0.1, 
-#                 edgecolor="grey", ax=axes[0], zorder=2,
-#                 missing_kwds={"color": "none", "edgecolor": "none"})
-
-# plot = gdf_2019_CF.plot(column="pct_cells_flooded", cmap=cmap, norm=norm, linewidth=0.1, 
-#                 edgecolor="grey", ax=axes[1], zorder=2,
-#                 missing_kwds={"color": "none", "edgecolor": "none"})
-
-# plot = gdf_2019_CF.plot(column="change_in_%_cells_flooded", cmap=cmap_change, norm=norm_change, linewidth=0.1, 
-#                 edgecolor="grey", ax=axes[2], zorder=2,
-#                 missing_kwds={"color": "none", "edgecolor": "none"})
-
-# xmin, xmax, ymin, ymax = flood_extent
-# for i, ax in enumerate(axes):
-#     background_utm.plot(ax=ax, color='#E0E0E0', zorder=0)
-#     bg_filtered_utm.boundary.plot(ax=ax, color="#B0B0B0", linewidth=0.5, zorder=1)
-#     region_utm.boundary.plot(ax=ax, color='black', linewidth=0.5, zorder=2)
-#     ax.set_xlim(xmin, xmax)
-#     ax.set_ylim(ymin, ymax)
-
-# for i, ax in enumerate(axes[:2]):
-#     sm = ScalarMappable(cmap=cmap, norm=norm)
-#     sm._A = []  
-#     cbar = plt.colorbar(sm, ax=ax, shrink=0.8)
-#     cbar.set_label("% cells flooded")
-
-# sm = ScalarMappable(cmap=cmap_change, norm=norm_change)
-# sm._A = []  
-# cbar = plt.colorbar(sm, ax=axes[2], shrink=0.8)
-# cbar.set_label("Difference in % cells flooded")
-
-# axes[0].set_title("Factual", fontsize=10)
-# axes[1].set_title("No Climate Change", fontsize=10)
-# axes[2].set_title("Factual - Counterfactual", fontsize=10)
-
-# axes[0].set_ylabel("y coordinate UTM zone 36S [m]")
-# axes[0].set_xlabel("x coordinate UTM zone 36S [m]")
-# axes[1].set_xlabel("x coordinate UTM zone 36S [m]")
-# axes[2].set_xlabel("x coordinate UTM zone 36S [m]")
-
-# fig.suptitle("% cells flooded", fontsize=12)
-
-# plt.tight_layout()
-# plt.show()
-
-#%% ============================================================================================ # 
-# ======================== Plot the factual flood and exposed population ======================= #
-# ============================================================================================== #
-# fig, axes = plt.subplots(1, 2, figsize=(12, 6))
-
-# for i, ax in enumerate(axes):
-#     background_utm.plot(ax=ax, color='#E0E0E0', zorder=0)
-#     bg_filtered_utm.boundary.plot(ax=ax, color="#B0B0B0", linewidth=0.5, zorder=1)
-#     region_utm.boundary.plot(ax=ax, color='black', linewidth=1, zorder=2)
-
-# # Factual flood
-# im = axes[0].imshow(hmax_F, cmap='viridis', extent=flood_extent, origin='lower', vmin=0, vmax=3.5)
-# cbar = plt.colorbar(im, ax=axes[0], shrink=0.8)
-# cbar.set_label("Flood depth (m)")
-# axes[0].set_title("Factual Flood Depth")
-
-# # Exposed population
-# im = axes[1].imshow(ra_exposed_pop_2019_F, cmap='viridis', extent=flood_extent, origin='lower')
-# cbar = plt.colorbar(im, ax=axes[1], shrink=0.8)
-# cbar.set_label("Exposed population")
-# axes[1].set_title("Factual Exposed Population")
-
-# plt.tight_layout()
-# plt.show()
-
-#%% 
+ #%%
 # ================================================================================== #
 # SUPPLEMENTARY: Factual flood, population & exposed population + changes (6-panel)  #
 # ================================================================================== #
@@ -2818,319 +1841,9 @@ def plot_supp_factual_changes_overview(hmax_F_da, gdf_pop_2019_exposed_F_coarse,
     return fig
 
 
-fig = plot_supp_factual_changes_overview(hmax_F_da, gdf_pop_2020_exposed_F_coarse, hmax_diff, gdf_pop_1975_exposed_F_coarse, gdf_pop_1975_exposed_CF_coarse, region_utm, background_utm, flood_extent)
+fig = plot_supp_factual_changes_overview(hmax_F_da, coarse_gdfs[2020]['F'], hmax_diff, coarse_gdfs[1975]['F'], 
+                                         coarse_gdfs[1975]['CF'], region_utm, background_utm, flood_extent)
 plt.show()
-
-
-#%%
-# def plot_factual_and_driver_changes_overview(gdf_pop_2019_exposed_F_coarse, hmax_diff, gdf_pop_1990_exposed_F_coarse, 
-#                                              region_utm, background_utm, flood_extent):
-#     # Data preparation for plotting
-#     gdf_2019 = gdf_pop_2019_exposed_F_coarse.copy()
-#     gdf_2019.loc[gdf_2019["total_population"] == 0] = np.nan
-#     gdf_1990 = gdf_pop_1990_exposed_F_coarse.copy()
-#     gdf_1990.loc[gdf_1990["total_population"] == 0] = np.nan
-#     gdf_2019["change_in_population"] = gdf_2019["total_population"] - gdf_1990["total_population"]
-
-#     # colour maps and norms
-#     norm_pop_exposed = PowerNorm(gamma=0.5, vmin=0, vmax=gdf_pop_2019_exposed_F_coarse["exposed_population"].max())
-#     # cmap_pop_exposed = mcolors.LinearSegmentedColormap.from_list("white_to_darkblue", ["#ffffff", "#67CBE4"])
-#     cmap_pop_exposed = mcolors.LinearSegmentedColormap.from_list(
-#     "white_blue_purple", ["#ffffff", "#67CBE4", "#3B1F8C"])
-#     cmap_change = plt.cm.Reds
-#     norm_pop_change = PowerNorm(gamma=0.5, vmin=0, vmax=np.nanmax(gdf_2019["change_in_population"]))
-
-#     fig, axes = plt.subplots(1, 3, figsize=(11, 5), dpi=300, sharey=True, constrained_layout=True,
-#                              subplot_kw={"projection": ccrs.UTM(36, southern_hemisphere=True)})
-
-#     # Plot 1 - Factual exposed population 
-#     gdf_exposed_F = gdf_pop_2019_exposed_F_coarse.copy()
-#     gdf_exposed_F.loc[gdf_exposed_F["exposed_population"] == 0, "exposed_population"] = np.nan
-#     gdf_exposed_F.plot(column="exposed_population", cmap=cmap_pop_exposed, edgecolor="grey", 
-#                        norm=norm_pop_exposed, linewidth=0.2, ax=axes[0], legend=False, 
-#                        zorder=2, rasterized=True,
-#                        missing_kwds={"color": "none", "edgecolor": "none"})
-    
-#     # Plot 2 - Climate change
-#     im = axes[1].imshow(hmax_diff, cmap=cmap_change, extent=flood_extent, origin="lower", vmin=0, vmax=0.5, zorder=2)
-
-#     # Plot 3 - Population change
-#     gdf_2019.plot(column="change_in_population", cmap=cmap_change, norm=norm_pop_change, linewidth=0.1,
-#                   edgecolor="grey", ax=axes[2], zorder=2, missing_kwds={"color": "none", "edgecolor": "none"})
-    
-#     setup_map_axes(axes, region_utm, background_utm, flood_extent,
-#                    subplot_labels=["(a)", "(b)", "(c)",],
-#                    titles=["Factual exposed population", "Climate change", "Population change"])
-    
-#     for ax in axes:
-#         # Plot city and river locations and names
-#         ax.plot(34.862, -19.833, marker='o', color='black', markersize=3, markeredgecolor='white', transform=ccrs.PlateCarree(), zorder=5)
-#         text = ax.text(34.852, -19.89, "Beira", transform=ccrs.PlateCarree(), fontsize=8, color='black', zorder=5)
-#         text.set_path_effects([path_effects.Stroke(linewidth=3, foreground='white'), path_effects.Normal()])
-        
-#         # Buzi River marker and label
-#         ax.plot(34.43, -19.89, marker='o', color='black', markersize=3, markeredgecolor='white', transform=ccrs.PlateCarree(), zorder=5)
-#         text2 = ax.text(34.44, -19.87, "Buzi River", transform=ccrs.PlateCarree(),
-#                         fontsize=8, color='black', zorder=5)
-#         text2.set_path_effects([path_effects.Stroke(linewidth=3, foreground='white'), path_effects.Normal()])
-#         # Pungwe River marker and label
-#         ax.plot(34.543, -19.545, marker='o', color='black', markersize=3, markeredgecolor='white', transform=ccrs.PlateCarree(), zorder=5)
-#         text3 = ax.text(34.554, -19.52, "Pungwe River", transform=ccrs.PlateCarree(),
-#                         fontsize=8, color='black', zorder=5)
-#         text3.set_path_effects([path_effects.Stroke(linewidth=3, foreground='white'), path_effects.Normal()])
-
-#     # Colour bars top row
-#     sm = ScalarMappable(cmap=cmap_pop_exposed, norm=norm_pop_exposed)
-#     sm._A = []
-#     cbar1 = fig.colorbar(sm, ax=axes[0], shrink=0.4)
-#     cbar1.set_label("Exposed population [×10³ people]", fontsize=9)
-#     cbar1.ax.tick_params(labelsize=8)
-#     formatter = FuncFormatter(lambda x, _: f"{x/1000:.0f}")
-#     cbar1.ax.yaxis.set_major_formatter(formatter)
-    
-#     cbar2 = plt.colorbar(im, ax=axes[1], shrink=0.4)
-#     cbar2.set_label("Attributable flood depth [m]", fontsize=9)
-#     cbar2.ax.tick_params(labelsize=8)
-
-#     sm = ScalarMappable(cmap=cmap_change, norm=norm_pop_change)
-#     sm._A = []
-#     cbar3 = fig.colorbar(sm, ax=axes[2], orientation="vertical", shrink=0.4)
-#     cbar3.set_label("Change in population [×10³ people]", fontsize=9)
-#     cbar3.ax.tick_params(labelsize=8)
-#     cbar3.ax.yaxis.set_major_formatter(formatter)
-
-#     total_exposed_F = gdf_exposed_F["exposed_population"].sum()
-#     axes[0].text(0.98, 0.98, f"~{round(total_exposed_F, -3):,.0f} people", transform=axes[0].transAxes,
-#                  ha="right", va="top", fontsize=9, bbox=dict(boxstyle="round",pad=0.25, fc="white", ec="none", alpha=0.8))
-
-#     return fig
-
-
-# fig = plot_factual_and_driver_changes_overview(gdf_pop_2020_exposed_F_coarse, hmax_diff, gdf_pop_1975_exposed_F_coarse, region_utm, background_utm, flood_extent)
-# plt.show()
-
-
-
-#%%
-# ============================================================================================ #
-# ======================= Compute total exposed population per district ====================== #
-# ============================================================================================ #
-# pop_totals = []
-# pop_exposed = []
-# pop_per_district_adm3 = []
-
-# for _, row in districts_adm3_filtered.iterrows():
-#     # Mask raster to district polygon
-#     from rasterio import features
-#     district_mask = features.geometry_mask([row.geometry],
-#                                            out_shape=ra_exposed_pop_2019_F.shape,
-#                                            transform=flood_grid_transform,
-#                                            invert=True)
-#     pop_exposed.append(ra_exposed_pop_2019_F[district_mask].sum())
-#     pop_totals.append(pop_arrays[2019][district_mask].sum())
-
-# districts_adm3_filtered['pop_exposed'] = pop_exposed
-# districts_adm3_filtered['pop_total'] = pop_totals
-
-# # Make sure districts are in the same CRS as the original pop raster
-# with rasterio.open(population_raster_path_2019) as src:
-#     pop_crs = src.crs
-
-# districts_native = districts_adm3_filtered.to_crs(pop_crs)
-
-# for _, row in districts_native.iterrows():
-#     district_mask = features.geometry_mask(
-#         [row.geometry],
-#         out_shape=pop_sofala_districts_adm3[2019][0].shape,
-#         transform=pop_affine_sofala_districts_adm3[2019],
-#         invert=True
-#     )
-#     pop_per_district_adm3.append(pop_sofala_districts_adm3[2019][0][district_mask].sum())
-
-# districts_adm3_filtered['pop_per_district'] = pop_per_district_adm3
-
-# #%%
-# # Do the same for admin 2 level
-# pop_totals = []
-# pop_exposed = []
-# pop_per_district_adm2 = []
-
-# for _, row in districts_adm2.iterrows():
-#     # Mask raster to district polygon
-#     from rasterio import features
-#     district_mask = features.geometry_mask([row.geometry],
-#                                            out_shape=ra_exposed_pop_2019_F.shape,
-#                                            transform=flood_grid_transform,
-#                                            invert=True)
-#     pop_exposed.append(ra_exposed_pop_2019_F[district_mask].sum())
-#     pop_totals.append(pop_arrays[2019][district_mask].sum())
-
-# districts_adm2['pop_exposed'] = pop_exposed
-# districts_adm2['pop_total'] = pop_totals
-
-# # Make sure districts are in the same CRS as the original pop raster
-# with rasterio.open(population_raster_path_2019) as src:
-#     pop_crs = src.crs
-
-# districts_native = districts_adm2.to_crs(pop_crs)
-
-# for _, row in districts_native.iterrows():
-#     district_mask = features.geometry_mask(
-#         [row.geometry],
-#         out_shape=pop_sofala_districts_adm2[2019][0].shape,
-#         transform=pop_affine_sofala_districts_adm2[2019],
-#         invert=True
-#     )
-#     pop_per_district_adm2.append(pop_sofala_districts_adm2[2019][0][district_mask].sum())
-
-# districts_adm2['pop_per_district'] = pop_per_district_adm2
-
-# #%%
-# # --- Plot ---
-# fig, axes = plt.subplots(1, 2, figsize=(12, 6))
-
-# for ax in axes:
-#     background_utm.plot(ax=ax, color='#E0E0E0', zorder=0)
-#     bg_filtered_utm.boundary.plot(ax=ax, color="#B0B0B0", linewidth=0.5, zorder=1)
-#     districts_adm3_filtered.boundary.plot(ax=ax, color='orange', linewidth=2, zorder=2)
-#     region_utm.boundary.plot(ax=ax, color='lightblue', linewidth=0.5, zorder=2)
-
-# # Rasterize the case-study region polygon
-# region_mask = rasterio.features.rasterize(
-#     [(geom, 1) for geom in region.geometry],
-#     out_shape=ra_exposed_pop_2019_F.shape,
-#     transform=flood_grid_transform,
-#     fill=0,
-#     all_touched=True,
-#     dtype=np.uint8
-# ).astype(bool)
-
-# # Mask raster outside region
-# ra_exposed_pop_masked = np.where(region_mask, ra_exposed_pop_2019_F, np.nan)
-    
-# # Exposed population
-# im = axes[0].imshow(ra_exposed_pop_masked, cmap='viridis', extent=flood_extent, origin='lower')
-# cbar = plt.colorbar(im, ax=axes[0], shrink=0.8)
-# cbar.set_label("Exposed population")
-# axes[0].set_title("Factual Exposed Population")
-
-# # Exposed population
-# im = axes[1].imshow(pop_arrays[2019], cmap='Reds', extent=flood_extent, origin='lower')
-# cbar = plt.colorbar(im, ax=axes[1], shrink=0.8)
-# cbar.set_label("Total population")
-# axes[1].set_title("Total 2019 Population")
-
-# # Dictionary with (dx, dy) offsets in map units for specific districts
-# label_offsets = {
-#     "Sofala": (0, 10000),  # move 0 m east, 10000 m north
-#     "Nhamatanda": (18000, -22000),
-#     "Estaquinha": (20000, -5000),
-#     # add more as needed
-# }
-
-# outside_districts = ["Nhamatanda", "Estaquinha"]
-
-# for idx, row in districts_adm3_filtered.iterrows():
-#     x, y = row.geometry.centroid.x, row.geometry.centroid.y
-#     # Apply offset if district in dictionary
-#     if row['NAME_3'] in label_offsets:
-#         dx, dy = label_offsets[row['NAME_3']]
-#         x += dx
-#         y += dy
-#     axes[0].text(x, y, f"{row['pop_exposed']:,.0f}", fontsize=8, ha='center', va='center',
-#             color='white', fontweight='bold', zorder=5)
-    
-#     axes[1].text(x, y, f"{row['pop_total']:,.0f}", fontsize=8, ha='center', va='center',
-#             color='black', fontweight='bold', zorder=5)
-    
-#     # District name label
-#     name_x = x - 8000 if row['NAME_3'] in outside_districts else x
-#     name_y = y - 3000  # all 3000 south of pop label
-
-#     axes[0].text(
-#         name_x, name_y, row['NAME_3'], fontsize=8, ha='center', va='center',
-#         color='coral', fontweight='bold', zorder=5
-#     )
-#     axes[1].text(
-#         name_x, name_y, row['NAME_3'], fontsize=8, ha='center', va='center',
-#         color='coral', fontweight='bold', zorder=5
-#     )
-    
-# plt.tight_layout()
-
-# #%%
-# # --- Plot ---
-# fig, ax = plt.subplots(1, 1, figsize=(12, 6))
-
-# # background_utm.plot(ax=ax, color='#E0E0E0', zorder=0)
-# # bg_filtered_utm.boundary.plot(ax=ax, color="#B0B0B0", linewidth=0.5, zorder=1)
-# districts_adm3_filtered.boundary.plot(ax=ax, color='orange', linewidth=2, zorder=2)
-# region_utm.boundary.plot(ax=ax, color='lightblue', linewidth=1, zorder=2)
-
-# # Dictionary with (dx, dy) offsets in map units for specific districts
-# label_offsets = {
-#     "Sofala": (0, 10000),  # move 0 m east, 10000 m north
-#     "Nhamatanda": (18000, -22000),
-#     "Estaquinha": (20000, -5000),
-#     # add more as needed
-# }
-# outside_districts = ["Nhamatanda", "Estaquinha"]
-
-# for idx, row in districts_adm3_filtered.iterrows():
-#     x, y = row.geometry.centroid.x, row.geometry.centroid.y
-#     ax.text(x, y, f"{row['pop_per_district']:,.0f}", fontsize=8, ha='center', va='center',
-#             color='black', fontweight='bold', zorder=5)
-    
-#     # District name label
-#     name_x = x
-#     name_y = y - 4000  # all 3000 south of pop label
-
-#     ax.text(
-#         name_x, name_y, row['NAME_3'], fontsize=8, ha='center', va='center',
-#         color='grey', fontweight='bold', zorder=5
-#     )
-
-# ax.set_title("2019 District Population")
-
-# plt.tight_layout()
-
-
-# #%%
-# # --- Plot ---
-# fig, ax = plt.subplots(1, 1, figsize=(12, 6))
-
-# # background_utm.plot(ax=ax, color='#E0E0E0', zorder=0)
-# # bg_filtered_utm.boundary.plot(ax=ax, color="#B0B0B0", linewidth=0.5, zorder=1)
-# districts_adm2_utm = districts_adm2.to_crs(region_utm.crs)
-# districts_adm2_utm.boundary.plot(ax=ax, color='orange', linewidth=2, zorder=2)
-# region.boundary.plot(ax=ax, color='lightblue', linewidth=1, zorder=2)
-
-# # Dictionary with (dx, dy) offsets in map units for specific districts
-# label_offsets = {
-#     "Sofala": (0, 10000),  # move 0 m east, 10000 m north
-#     "Nhamatanda": (18000, -22000),
-#     "Estaquinha": (20000, -5000),
-#     # add more as needed
-# }
-
-# for idx, row in districts_adm2_utm.iterrows():
-#     x, y = row.geometry.centroid.x, row.geometry.centroid.y
-#     ax.text(x, y, f"{row['pop_per_district']:,.0f}", fontsize=8, ha='center', va='center',
-#             color='black', fontweight='bold', zorder=5)
-    
-#     # District name label
-#     name_x = x
-#     name_y = y - 7000  # all 3000 south of pop label
-
-#     ax.text(
-#         name_x, name_y, row['NAME_2'], fontsize=8, ha='center', va='center',
-#         color='grey', fontweight='bold', zorder=5
-#     )
-
-# ax.set_title("2019 District Population")
-
-# plt.tight_layout()
-
 
 #%%
 # table with numbers per district
@@ -3141,89 +1854,6 @@ df_district_summary["% exposed"] = (100 * df_district_summary['Exposed Populatio
 df_district_summary[['District', 'District Population (2019)', 'Total Population in Region', 'Exposed Population (2019 Factual)']] = df_district_summary[['District', 'District Population (2019)', 'Total Population in Region', 'Exposed Population (2019 Factual)']].round(0)
 
 df_district_summary.to_csv("c:/Code/COMPASS_exposure/Data/Modified/sofala_district_exposed_population_summary.csv", index=False)
-
-#%% ============================================================================================ # 
-# # --- Prepare colormap for absolute pop exposed ---
-# colors = plt.cm.Blues(np.linspace(0, 1, 256))
-# colors[0] = [1, 1, 1, 0]  # make first color transparent
-# pop_cmap = mcolors.ListedColormap(colors)
-
-# # --- Prepare colormap for change in pop exposed ---
-# colors = plt.cm.RdBu_r(np.linspace(0, 1, 256))
-# mid = 128  # midpoint index in 256
-# colors[mid] = [1, 1, 1, 0]  # RGBA, fully transparent
-# diff_cmap = mcolors.ListedColormap(colors)
-
-# pop_diff_PG = ra_exposed_pop_2019_F - ra_exposed_pop_1990_F
-# pop_diff_CC = ra_exposed_pop_2019_F - ra_exposed_pop_2019_CF
-
-# vmax_pg = np.nanmax(pop_diff_PG)
-# vmax_cc = np.nanmax(pop_diff_CC)
-
-# #%%
-# # --- Setup figure ---
-# fig, axes = plt.subplots(2, 3, figsize=(18, 12), sharex=True, sharey=True, dpi=300, constrained_layout=True)
-
-# for i, ax in enumerate(axes.flatten()):
-#     background_utm.plot(ax=ax, color='#E0E0E0', zorder=0)
-#     bg_filtered_utm.boundary.plot(ax=ax, color="#B0B0B0", linewidth=0.5, zorder=1)
-#     region_utm.boundary.plot(ax=ax, color='black', linewidth=1, zorder=2)
-
-# # --- Population colormap ---
-# pop_bins = np.arange(0, np.nanmax(ra_exposed_pop_2019_F)+1, 1)  # 0,1,2,... max
-# pop_colors = plt.cm.Blues(np.linspace(0, 1, len(pop_bins)-1))
-# pop_colors[0] = [1, 1, 1, 0]  # RGBA
-# pop_cmap_discrete = mcolors.ListedColormap(pop_colors)
-# pop_norm = BoundaryNorm(pop_bins, pop_cmap_discrete.N, extend='neither')
-
-# # --- Difference colormap ---
-# diff_bins = np.arange(-int(vmax_cc), int(vmax_cc)+1, 1)  # integer steps
-# diff_colors = plt.cm.RdBu_r(np.linspace(0, 1, len(diff_bins)-1))
-# mid_idx = np.where(diff_bins[:-1] == 0)[0]
-# if len(mid_idx) > 0:
-#     diff_colors[mid_idx[0]] = [1, 1, 1, 0]
-# diff_cmap_discrete = mcolors.ListedColormap(diff_colors)
-# diff_norm = BoundaryNorm(diff_bins, diff_cmap_discrete.N, extend='neither')
-
-# # --- TOP ROW ---
-# # Population change effect
-# im = axes[0,0].imshow(np.round(ra_exposed_pop_2019_F).astype(int), cmap=pop_cmap_discrete, norm=pop_norm,
-#                       extent=flood_extent, origin='lower', alpha=0.8, zorder=3)
-# axes[0,0].set_title("Exposed 2019 Population")
-
-# im = axes[0,1].imshow(np.round(ra_exposed_pop_1990_F).astype(int), cmap=pop_cmap_discrete, norm=pop_norm,
-#                       extent=flood_extent, origin='lower', alpha=0.8, zorder=3)
-# cbar = plt.colorbar(im, ax=axes[0,1], shrink=0.8)
-# cbar.set_label("Exposed population")
-# axes[0,1].set_title("Exposed 1990 Population")
-
-# im = axes[0,2].imshow(np.round(pop_diff_PG).astype(int), cmap=diff_cmap_discrete, norm=diff_norm,
-#                       extent=flood_extent, origin='lower', alpha=0.8, zorder=3)
-# cbar = plt.colorbar(im, ax=axes[0,2], shrink=0.8)
-# cbar.set_label("Attributable exposed population")
-# axes[0,2].set_title("Population Change (2019 - 1990)")
-
-# # # --- BOTTOM ROW --
-# # Climate change effect
-# im = axes[1,0].imshow(np.round(ra_exposed_pop_2019_F).astype(int), cmap=pop_cmap_discrete, norm=pop_norm, extent=flood_extent,
-#                       origin='lower', alpha=0.8, zorder=3)
-# axes[1,0].set_title("Factual Climate")
-
-# im = axes[1,1].imshow(np.round(ra_exposed_pop_2019_CF).astype(int), cmap=pop_cmap_discrete, norm=pop_norm, extent=flood_extent,
-#                       origin='lower', alpha=0.8, zorder=3)
-# cbar = plt.colorbar(im, ax=axes[1,1], shrink=0.8)
-# cbar.set_label("Exposed population")
-# axes[1,1].set_title("Counterfactual Climate")
-
-# im = axes[1,2].imshow(np.round(pop_diff_CC).astype(int), cmap=diff_cmap_discrete, norm=diff_norm, 
-#                       extent=flood_extent, origin='lower', alpha=0.8, zorder=3)
-# cbar = plt.colorbar(im, ax=axes[1,2], shrink=0.8)
-# cbar.set_label("Attributable exposed population")
-# axes[1,2].set_title("Climate Change")
-
-# plt.show()
-
-
 
 #%%
 # ============================================================================================ #
