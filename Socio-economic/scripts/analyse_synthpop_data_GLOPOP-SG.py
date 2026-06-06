@@ -1,58 +1,31 @@
 #%% 
-# First use read_synthpop_data_GLOPOP-SG.py to read the .dat file and combine it with the .tif file to add coordinates. 
+# GLOPOP-SG data available on  https://doi.org/10.7910/DVN/KJC3RH
+# First use read_synthpop_data_GLOPOP-SG.py from https://github.com/VU-IVM/GLOPOP-S/blob/main/READ_SYNTHPOP_DATA/read_synthpop_data.py
+# to read the .dat file and combine it with the .tif file to add coordinates. 
 # Then use this script to analyze the combined data using pixi env compass-socio.
 import os
-from pathlib import Path
-import platform
+import json
+import rasterio
 import numpy as np
 import pandas as pd
-import gzip
-import rasterio
+from pathlib import Path
 import rioxarray as rxr
 import geopandas as gpd
-import json
-from shapely import Point
-from shapely.geometry import Polygon, mapping
-import matplotlib.pyplot as plt
-# from hydromt import DataCatalog
-import rasterio.features as features
-from rasterio.mask import mask
 from affine import Affine
-from shapely.geometry import box
-from shapely.geometry import Polygon
-from tqdm import tqdm
-from rasterio.warp import reproject, Resampling
-from matplotlib.colors import LinearSegmentedColormap, PowerNorm, TwoSlopeNorm
+import matplotlib.pyplot as plt
+from matplotlib.colors import PowerNorm
 from matplotlib.cm import ScalarMappable
-import cartopy.crs as ccrs
-from rasterio.features import geometry_mask, rasterize
-from shapely.geometry import mapping
-from matplotlib.colors import LinearSegmentedColormap
-from matplotlib.ticker import FuncFormatter
-from rasterio.features import shapes
-from shapely.geometry import shape
 import matplotlib.ticker as mticker
+import rasterio.features as features
+from rasterio.features import geometry_mask, rasterize, shapes
+from rasterio.mask import mask
+from rasterio.warp import reproject, Resampling
+import cartopy.crs as ccrs
+from shapely.geometry import box, mapping, shape, Polygon
+from tqdm import tqdm
 
-prefix = "p:/" if platform.system() == "Windows" else "/p/"
-
-#%%
-# ===== FILE PATHS =====
-# Base directory for the specific event and scenario
-BASE_RUN_PATH = Path("p:/11210471-001-compass/03_Runs/sofala/Idai")
-BASE_DATA_PATH = Path("p:/11210471-001-compass/01_Data")
-sfincs_dir_F  = BASE_RUN_PATH / "sfincs" / "event_tp_era5_hourly_zarr_CF0_GTSMv41_CF0_era5_hourly_spw_IBTrACS_CF0" # Factual
-sfincs_dir_CF = BASE_RUN_PATH / "sfincs" / "event_tp_era5_hourly_zarr_CF-6_GTSMv41_CF-0.07_era5_hourly_spw_IBTrACS_CF-4" # CF baseline 1975
-
-# ===== INPUT FILES =====
-# Flood model subgrid
-sfincs_subgrid = os.path.join(sfincs_dir_F, "subgrid", "dep_subgrid.tif")
-with rasterio.open(sfincs_subgrid) as src:
-    flood_grid_crs, flood_grid_transform, flood_grid_shape = src.crs, src.transform, (src.height, src.width)
-
-# flood rasters
-hmax_F = rxr.open_rasterio(sfincs_dir_F / "plot_output" / "floodmap_15cm.tif").squeeze("band", drop=True).values
-hmax_CF = rxr.open_rasterio(sfincs_dir_CF / "plot_output" / "floodmap_15cm.tif").squeeze("band", drop=True).values
-
+# %%
+# ===== HELPER FUNCTIONS =====
 # get extent from raster transform
 def get_extent(transform, width, height):
     left = transform[2]
@@ -60,54 +33,8 @@ def get_extent(transform, width, height):
     top = transform[5]
     bottom = top + height * transform[4]
     return [left, right, top, bottom]
-
-flood_extent = get_extent(flood_grid_transform, flood_grid_shape[1], flood_grid_shape[0])
-
-
-# Background layers for plotting
-mask_poly = Polygon([(34.9,-20.3), (36,-20.3), (36,-19.9), (34.9,-19.9)])
-region = gpd.read_file(os.path.join(sfincs_dir_F, "gis/region.geojson")).to_crs(flood_grid_crs)
-region_wsg84 = region.to_crs("EPSG:4326")
-region_geom = [json.loads(region.to_json())["features"][0]["geometry"]]
-
-background = gpd.read_file(os.path.join(BASE_DATA_PATH, "sofala_geoms", "sofala_region_background.geojson"), driver="GeoJSON")
-bg_filtered = background.copy()
-bg_filtered['geometry'] = bg_filtered.geometry.apply(lambda g: g.difference(mask_poly))
-background_utm = background.to_crs(flood_grid_crs)
-bg_filtered_utm = bg_filtered.to_crs(flood_grid_crs)
-
-
-# Load administrative boundaries
-shapefile_sofala = gpd.read_file(os.path.join(BASE_DATA_PATH, "sofala_geoms", "sofala_province.shp"))
-districts_adm3 = gpd.read_file(os.path.join(BASE_DATA_PATH, "sofala_geoms", "sofala_districts_study_region.shp"))
-gdf = gpd.read_file("p:/11210471-001-compass/01_Data/sofala_geoms/gadm41_MOZ_shp/gadm41_MOZ_2.shp")
-gdf = gdf.to_crs(region.crs)
-region_geom = region.geometry.iloc[0]
-districts_adm2 = gdf[gdf.intersects(region_geom)].copy()
-districts_adm3_utm = districts_adm3.to_crs(flood_grid_crs)
-districts_adm2_utm = districts_adm2.to_crs(flood_grid_crs)
-
-# Remove districts that are not connecting to the region
-drop_districts = ["Muanza", "Gororngosa-Sede", "Galinha"]
-districts_adm3_filtered = districts_adm3_utm[~districts_adm3_utm['NAME_3'].isin(drop_districts)]
-
-# GLOPOP-SG: Read population and their socio-economic characteristics 
-df_pop_charac = pd.read_csv(Path('data', 'GLOPOP-SG', 'synthpop_MOZr107_grid_combined.csv'))
-glopop_path = Path('data', 'GLOPOP-SG', 'MOZr107_population.tif')
-pop_grid = rxr.open_rasterio(glopop_path).squeeze("band", drop=True)  
-year_glopop = 2015
-
-# And its corresponding .tif file to add coordinates of the grid cells
-grid_nr_filepath = Path('data', 'GLOPOP-SG', 'MOZr107_grid_nr.tif')
-with rasterio.open(grid_nr_filepath) as src:
-    grid_ids = src.read(1)                   # read first band
-    grid_id_transform = src.transform      
-    grid_id_crs = src.crs      
-    nodata = src.nodata
-    profile = src.profile
-
-
-#%%  ===== FUNCTIONS FOR POPULATION EXPOSURE =====
+ 
+# ===== FUNCTIONS FOR POPULATION EXPOSURE =====
 # Redistribute population and Grid IDs to flood grid and land mask
 def reproject_and_redistribute_population_over_land(pop_path, grid_id_path, land_gdf, flood_crs, flood_transform, flood_shape, province_geom=None, region=None, districts_adm3=None, districts_adm2=None, year=None, out_raster_path=None):    
     print(f"▶ Loading {year} population raster...")
@@ -137,10 +64,10 @@ def reproject_and_redistribute_population_over_land(pop_path, grid_id_path, land
         pop_districts_adm2, pop_affine_districts_adm2 = mask(src, districts_adm2_geom, crop=True, nodata=src.nodata)
 
         if out_raster_path is not None and os.path.exists(out_raster_path) and os.path.exists(out_raster_path.replace(".tif", "_grid_ID.tif")):
-            print(f"▶ Loading existing raster from {out_raster_path}")
+            print(f"▶ Loading existing population raster from {out_raster_path}")
             with rasterio.open(out_raster_path) as src:
                 pop_fine = src.read(1)
-            print(f"▶ Loading existing raster from {out_raster_path.replace('.tif', '_grid_ID.tif')}")
+            print(f"▶ Loading existing grid ID raster from {out_raster_path.replace('.tif', '_grid_ID.tif')}")
             with rasterio.open(out_raster_path.replace(".tif", "_grid_ID.tif"), "r") as src_id:
                 grid_id_fine = src_id.read(1)
             return pop_fine, grid_id_fine, pop_sofala, transform_sofala, pop_districts_adm3, pop_affine_districts_adm3, pop_districts_adm2, pop_affine_districts_adm2
@@ -378,17 +305,77 @@ def aggregate_exposed_pop_to_grid_id(pop_array_fine, flood_array, grid_id_array_
     return agg
 
 
+# ===== FILE PATHS =====
+# Base directory for the specific event and scenario
+BASE_DATA_PATH = Path("../data")
+sfincs_dir_F  = BASE_DATA_PATH / "sfincs" / "event_tp_era5_hourly_zarr_CF0_GTSMv41_CF0_era5_hourly_spw_IBTrACS_CF0" # Factual
+sfincs_dir_CF = BASE_DATA_PATH / "sfincs" / "event_tp_era5_hourly_zarr_CF-6_GTSMv41_CF-0.07_era5_hourly_spw_IBTrACS_CF-4" # CF baseline 1975
+
+# ===== INPUT FILES =====
+# Flood model subgrid
+sfincs_subgrid = os.path.join(sfincs_dir_F, "subgrid", "dep_subgrid.tif")
+with rasterio.open(sfincs_subgrid) as src:
+    flood_grid_crs, flood_grid_transform, flood_grid_shape = src.crs, src.transform, (src.height, src.width)
+
+# flood rasters
+hmax_F = rxr.open_rasterio(sfincs_dir_F / "floodmap_15cm.tif").squeeze("band", drop=True).values
+hmax_CF = rxr.open_rasterio(sfincs_dir_CF / "floodmap_15cm.tif").squeeze("band", drop=True).values
+
+flood_extent = get_extent(flood_grid_transform, flood_grid_shape[1], flood_grid_shape[0])
+
+# Background layers for plotting
+mask_poly = Polygon([(34.9,-20.3), (36,-20.3), (36,-19.9), (34.9,-19.9)])
+region = gpd.read_file(os.path.join(sfincs_dir_F, "gis/region.geojson")).to_crs(flood_grid_crs)
+region_wsg84 = region.to_crs("EPSG:4326")
+region_geom = [json.loads(region.to_json())["features"][0]["geometry"]]
+
+background = gpd.read_file(os.path.join(BASE_DATA_PATH, "gis", "case_study_region_background.geojson"), driver="GeoJSON")
+bg_filtered = background.copy()
+bg_filtered['geometry'] = bg_filtered.geometry.apply(lambda g: g.difference(mask_poly))
+background_utm = background.to_crs(flood_grid_crs)
+bg_filtered_utm = bg_filtered.to_crs(flood_grid_crs)
+
+# Load administrative boundaries
+shapefile_sofala = gpd.read_file(os.path.join(BASE_DATA_PATH, "gis", "sofala_province.shp"))
+districts_adm3 = gpd.read_file(os.path.join(BASE_DATA_PATH, "gis", "sofala_districts_study_region.shp"))
+gdf = gpd.read_file(os.path.join(BASE_DATA_PATH, "gis", "gadm41_MOZ_2.shp"))
+gdf = gdf.to_crs(region.crs)
+region_geom = region.geometry.iloc[0]
+districts_adm2 = gdf[gdf.intersects(region_geom)].copy()
+districts_adm3_utm = districts_adm3.to_crs(flood_grid_crs)
+districts_adm2_utm = districts_adm2.to_crs(flood_grid_crs)
+
+# Remove districts that are not connecting to the region
+drop_districts = ["Muanza", "Gororngosa-Sede", "Galinha"]
+districts_adm3_filtered = districts_adm3_utm[~districts_adm3_utm['NAME_3'].isin(drop_districts)]
+
+# GLOPOP-SG: Read population and their socio-economic characteristics 
+df_pop_charac = pd.read_csv(Path(BASE_DATA_PATH, 'GLOPOP-SG', 'synthpop_MOZr107_grid_combined.csv'))
+glopop_path = Path(BASE_DATA_PATH, 'GLOPOP-SG', 'MOZr107_population.tif')
+pop_grid = rxr.open_rasterio(glopop_path).squeeze("band", drop=True)  
+year_glopop = 2015
+
+# And its corresponding .tif file to add coordinates of the grid cells
+grid_nr_filepath = Path(BASE_DATA_PATH, 'GLOPOP-SG', 'MOZr107_grid_nr.tif')
+with rasterio.open(grid_nr_filepath) as src:
+    grid_ids = src.read(1)                   # read first band
+    grid_id_transform = src.transform      
+    grid_id_crs = src.crs      
+    nodata = src.nodata
+    profile = src.profile
+
+
+
 #%%
 # Step 1: Downscale total population and grid IDs to the flood raster (25 m).
-export_path = "p:/11210471-001-compass/04_Results/Idai_socioeconomic/preprocessed/population_characteristics/"
-
+export_path = Path(BASE_DATA_PATH, "GLOPOP-SG", "preprocessed")
 
 # --- Reproject to flood grid and redistribute population rasters over land ---
 pop_fine_glopop, grid_id_fine_glopop, pop_sofala_arrays_glopop, transform_sofala_land, pop_districts_adm3_glopop, pop_affine_districts_adm3_glopop, pop_districts_adm2_glopop, pop_affine_districts_adm2_glopop = reproject_and_redistribute_population_over_land(
         pop_path=glopop_path, grid_id_path=grid_nr_filepath, land_gdf=background_utm, flood_crs=flood_grid_crs, flood_transform=flood_grid_transform,
         flood_shape=flood_grid_shape, province_geom=shapefile_sofala, region=region, districts_adm3=districts_adm3_filtered,
         districts_adm2=districts_adm2, year=year_glopop,
-        out_raster_path=f"{export_path}population_GLOPOP_SG_MOZr107_regrid.tif") 
+        out_raster_path=os.path.join(export_path, "population_GLOPOP_SG_MOZr107_regrid.tif"))
 
 region_mask = rasterize([(geom, 1) for geom in region.geometry], out_shape=flood_grid_shape,
                         transform=flood_grid_transform, fill=0, 
@@ -416,12 +403,8 @@ pop_charac_exposed_CF = df_pop_charac_clipped.merge(gdf_pop_glopop_exposed_CF_co
 #%%
 # Once outside the loop
 region_wgs84 = region.to_crs('EPSG:4326')
-clip_mask = geometry_mask(
-    [mapping(geom) for geom in region_wgs84.geometry],
-    transform=grid_id_transform,
-    invert=True,                 
-    out_shape=grid_ids.shape
-)
+clip_mask = geometry_mask([mapping(geom) for geom in region_wgs84.geometry],
+                          transform=grid_id_transform, invert=True, out_shape=grid_ids.shape)
 
 #%%
 # export urban region as polygon for analyses
@@ -439,47 +422,24 @@ for geom, value in shapes(urban_mask.astype(np.uint8), transform=grid_id_transfo
 gdf_urban = gpd.GeoDataFrame(geometry=polygons, crs=grid_id_crs)
 gdf_urban = gdf_urban.dissolve()
 gdf_urban = gpd.overlay(gdf_urban, region_wgs84, how="intersection")
-gdf_urban.to_file("data/GLOPOP-SG/urban_area.geojson", driver="GeoJSON")
+# gdf_urban.to_file("../data/GLOPOP-SG/urban_area.geojson", driver="GeoJSON")
 
 
 #%% Shares of socio-economic groups within settlement types
-# TABLE S07: For each socio-economic variable, compute the share of each group given settlement type
-import pandas as pd
-
-all_groups = {
-    "WEALTH": {
-        "Poorest & Poorer": [1, 2],
-        "Middle": [3],
-        "Richer & Richest": [4, 5],
-    },
-    "EDUC": {
-        "< Primary & Primary": [1, 2],
-        "Incomplete secondary": [3],
-        "Secondary & Higher": [4, 5],
-    },
-    "HHSIZE_CAT": {
-        "1 person": [1],
-        "2+ people": [2, 3, 4, 5, 6],
-    },
-    "GENDER": {
-        "Male": [1],
-        "Female": [0],
-    },
-    "AGE": {
-        "Young (<5) & Elderly (65+)": [1, 8],
-        "5-64 years": [2, 3, 4, 5, 6, 7],
-    }
-}
+# TABLE S7: For each socio-economic variable, compute the share of each group given settlement type
+all_groups = {"WEALTH": {"Poorest & Poorer": [1, 2], "Middle": [3], "Richer & Richest": [4, 5]},
+              "EDUC": {"< Primary & Primary": [1, 2], "Incomplete secondary": [3], "Secondary & Higher": [4, 5]},
+              "HHSIZE_CAT": {"1 person": [1], "2+ people": [2, 3, 4, 5, 6]},
+              "GENDER": {"Male": [1], "Female": [0]},
+              "AGE": {"Young (<5) & Elderly (65+)": [1, 8], "5-64 years": [2, 3, 4, 5, 6, 7]}}
 
 # --- flatten settlement categories ---
 df = pop_charac_exposed_F.copy()
 df["settlement"] = df["RURAL"].map({1: "Rural", 0: "Urban"})
 
 rows = []
-
 for var, groups in all_groups.items():
     for label, values in groups.items():
-
         subset = df[df[var].isin(values)]
         if len(subset) == 0:
             continue
@@ -487,15 +447,8 @@ for var, groups in all_groups.items():
         rural_count = (subset["settlement"] == "Rural").sum()
         urban_count = (subset["settlement"] == "Urban").sum()
 
-        rows.append({
-            "category": var,
-            "group": label,
-            "n_total": len(subset),
-            # "P_rural_given_group (%)": 100 * rural_count / len(subset),
-            # "P_urban_given_group (%)": 100 * urban_count / len(subset),
-            "share_of_all_rural (%)": np.nan,
-            "share_of_all_urban (%)": np.nan,
-        })
+        rows.append({"category": var, "group": label, "n_total": len(subset),
+                     "share_of_all_rural (%)": np.nan, "share_of_all_urban (%)": np.nan})
 
 df_settlement_shares = pd.DataFrame(rows)
 
@@ -508,18 +461,14 @@ for i, row in df_settlement_shares.iterrows():
     group_vals = all_groups[var][row["group"]]
     subset = df[df[var].isin(group_vals)]
 
-    df_settlement_shares.loc[i, "share_of_all_rural (%)"] = (
-        (subset["settlement"] == "Rural").sum() / rural_total * 100
-    )
-    df_settlement_shares.loc[i, "share_of_all_urban (%)"] = (
-        (subset["settlement"] == "Urban").sum() / urban_total * 100
-    )
+    df_settlement_shares.loc[i, "share_of_all_rural (%)"] = ((subset["settlement"] == "Rural").sum() / rural_total * 100)
+    df_settlement_shares.loc[i, "share_of_all_urban (%)"] = ((subset["settlement"] == "Urban").sum() / urban_total * 100)
 
 # df_settlement_shares.to_csv("results/Table_S07.csv", index=False)
 print(df_settlement_shares)
 
 #%%
-# SUPPLEMENT FIG
+# SUPPLEMENT FIG S6: Spatial distribution of socio-economic groups
 def plot_socioeconomic_shares(
     df,
     grid_id_crs,
@@ -629,8 +578,8 @@ def plot_socioeconomic_shares(
     cbar.ax.yaxis.set_major_formatter(mticker.FuncFormatter(lambda x, _: f"{x/1000:.0f}"))
 
     # fig.suptitle("Spatial distribution of socioeconomic groups", fontsize=9)
-    fig.savefig("figures/fS08.png", dpi=dpi)
-    fig.savefig("figures/fS08.pdf", dpi=dpi)
+    fig.savefig("../figures/fS06.png", dpi=dpi)
+    fig.savefig("../figures/fS06.pdf", dpi=dpi)
 
     plt.show()
     return fig
@@ -703,9 +652,6 @@ def aggregate_exposure(df, var):
 # Available socio-economic characteristics with data
 socio_vars = ['WEALTH', 'RURAL', 'AGE', 'EDUC', 'HHSIZE_CAT', 'GENDER']
 
-# pop_charac_exposed_F['group_label_med'] = pop_charac_exposed_F.apply(make_group_label_med, axis=1)
-# pop_charac_exposed_CF['group_label_med'] = pop_charac_exposed_CF.apply(make_group_label_med, axis=1)
-
 # --- Define flood depth categories ---
 flood_bins_labels = ['Low', 'Mod-high', 'Very high']
 flood_bins_edges = [0.15, 0.5, 1.5, 3.5]  
@@ -722,14 +668,7 @@ pop_charac_exposed_CF['flood_bin'] = pd.cut(pop_charac_exposed_CF['avg_flood_dep
 
 # %%
 # All individual variables separately 
-variables = {
-    'AGE': 'A',
-    'WEALTH': 'W',
-    'EDUC': 'E',
-    'RURAL': 'R',
-    'HHSIZE_CAT': 'H',
-    'GENDER': 'G'
-}
+variables = {'AGE': 'A', 'WEALTH': 'W', 'EDUC': 'E', 'RURAL': 'R', 'HHSIZE_CAT': 'H', 'GENDER': 'G'}
 
 for col, prefix in variables.items():
     pop_charac_exposed_F[f"{col}_label"] = (
@@ -751,21 +690,12 @@ for col, prefix in variables.items():
                         / agg['weighted_exposed_F'] * 100)
 
     # ---- Add total across all flood categories ----
-    total = (
-        agg.groupby(var)[['weighted_exposed_F', 'weighted_exposed_CF']]
-        .sum()
-        .reset_index()
-    )
-
+    total = (agg.groupby(var)[['weighted_exposed_F', 'weighted_exposed_CF']].sum().reset_index())
     total['flood_category'] = 'Total'
 
     # % change for total
-    total['pct_change'] = (
-        (total['weighted_exposed_F'] - total['weighted_exposed_CF'])
-        / total['weighted_exposed_F'] * 100
-    )
-
-    # Append to agg
+    total['pct_change'] = ((total['weighted_exposed_F'] - total['weighted_exposed_CF'])
+                           / total['weighted_exposed_F'] * 100)
     agg = pd.concat([agg, total], ignore_index=True)
 
     # Pivot
@@ -803,24 +733,10 @@ for col, prefix in variables.items():
     table_t = table_t.loc[new_index]
 
     # Compute total population per group
-    total_pop_F = (
-        pop_charac_exposed_F
-        .groupby(var)
-        .size()
-    )
-
-    # Create a properly aligned DataFrame
-    pop_row = (
-        total_pop_F
-        .to_frame(name='Total')     # only Total column
-        .assign(metric='Population')
-        .set_index('metric', append=True)
-    )
-
-    # Reindex to match table_t columns (fills other flood categories with NaN)
+    total_pop_F = (pop_charac_exposed_F.groupby(var).size())
+    pop_row = (total_pop_F.to_frame(name='Total').assign(metric='Population').set_index('metric', append=True))
     pop_row = pop_row.reindex(columns=table_t.columns)
 
-    # Append safely
     table_t = pd.concat([table_t, pop_row])
 
 
@@ -853,17 +769,13 @@ for col, prefix in variables.items():
 final_table = pd.concat(all_tables)
 final_table = final_table.reset_index()
 final_table.columns.name = None
-final_table = final_table.rename(columns={
-    final_table.columns[0]: "Category",
-    final_table.columns[1]: "Metric"
-})
-
+final_table = final_table.rename(columns={final_table.columns[0]: "Category", final_table.columns[1]: "Metric"})
 final_table
 
 
 
 #%%
-
+# Helper function to prepare data for plotting attribution ofa single socio-economic variable
 def single_var_socioeconomic_exposure(final_table, prefix, depth_order):
     # ---- Filter selected socio-economic variable ----
     data = final_table[final_table["Category"].str.startswith(prefix)].copy()
@@ -918,7 +830,7 @@ def single_var_socioeconomic_exposure(final_table, prefix, depth_order):
 
 
 #%%
-# FIGURE 5 PAPER
+# FIGURE 5 
 depth_order = ["Low", "Mod-high", "Very high", "Total"]
 
 pivot_wealth, groups_wealth, n_groups_wealth, x_wealth, bar_width_wealth = single_var_socioeconomic_exposure(final_table, prefix="W", depth_order=depth_order)
@@ -936,7 +848,6 @@ educ_labels = {"E1": "Less than primary", "E2": "Primary", "E3": "Incomplete sec
 hhsize_labels = {"H1": "1 person", "H2": "2 people", "H3": "3-4 people", "H4": "5-6 people", "H5": "7-10 people", "H6": ">10 people"}
 colours_wealth = ["#feebe2", "#fbb4b9", "#f768a1", "#c51b8a", "#7a0177"]
 colours_settlement = ["#5ab4ac", "#d8b365"]
-# colours_age = ['#f7fcf5','#e5f5e0','#c7e9c0','#a1d99b','#74c476','#41ab5d','#238b45','#005a32']
 colours_age = ['#c7e9c0','#74c476','#238b45']
 colours_gender = ['#e9a3c9', '#91bfdb']
 colours_educ = ["#E0F2F1", "#B2DFDB", "#80CBC4", "#26A69A", "#00695C"]
@@ -1082,15 +993,15 @@ axes[1,1].legend(title=f"Sex category", loc='upper left', fontsize=8, title_font
 axes[2,0].legend(title=f"Education category", loc='upper left', fontsize=8, title_fontsize=8,)
 axes[2,1].legend(title=f"Household size category", loc='upper left', fontsize=8, title_fontsize=8)
 
-# fig.savefig("figures/f05.png", dpi=300, bbox_inches='tight')
-# fig.savefig("figures/f05.pdf", dpi=300, bbox_inches='tight')
-fig.savefig("figures/f05.jpeg", dpi=300, bbox_inches='tight')
+# fig.savefig("../figures/f05.png", dpi=300, bbox_inches='tight')
+# fig.savefig("../figures/f05.pdf", dpi=300, bbox_inches='tight')
+# fig.savefig("../figures/f05.jpeg", dpi=300, bbox_inches='tight')
 
 plt.tight_layout()
 plt.show()
 
 #%%
-# FIGURE 5 - SUPPLEMENT: ABSOLUTE CHANGE IN EXPOSED POPULATION (F-CF) PER SOCIO-ECONOMIC CHARACTERISTIC AND FLOOD DEPTH
+# FIGURE S7 - SUPPLEMENT: ABSOLUTE CHANGE IN EXPOSED POPULATION (F-CF) PER SOCIO-ECONOMIC CHARACTERISTIC AND FLOOD DEPTH
 # Plot for all characteristics the factual exposed population per flood depth
 fig, axes = plt.subplots(3, 2, figsize=(11, 12), sharey=True, dpi=300, constrained_layout=True)
 
@@ -1219,24 +1130,9 @@ axes[1,1].legend(title=f"Sex category", loc='upper left', fontsize=8, title_font
 axes[2,0].legend(title=f"Education category", loc='upper left', fontsize=8, title_fontsize=8,)
 axes[2,1].legend(title=f"Household size category", loc='upper left', fontsize=8, title_fontsize=8)
 
-fig.savefig("figures/f07.png", dpi=300, bbox_inches='tight')
-fig.savefig("figures/f07.pdf", dpi=300, bbox_inches='tight')
+# fig.savefig("../figures/fS07.png", dpi=300, bbox_inches='tight')
+# fig.savefig("../figures/fS07.pdf", dpi=300, bbox_inches='tight')
 
 plt.tight_layout()
 plt.show()
 
-
-# %%
-# Average change you are exposed to flooding due to climate change
-exposed_frac_total_pop_F = pop_charac_exposed_F['exposure_ratio'].sum() / len(pop_charac_exposed_F) * 100
-exposed_frac_total_pop_CF = pop_charac_exposed_CF['exposure_ratio'].sum() / len(pop_charac_exposed_CF) * 100
-change_exposed_frac = exposed_frac_total_pop_F - exposed_frac_total_pop_CF
-
-print(f"Average % of population exposed to flooding in Factual: {exposed_frac_total_pop_F:.2f}%")
-print(f"Average % of population exposed to flooding in Climate Future: {exposed_frac_total_pop_CF:.2f}%")
-print(f"Change in exposure: {change_exposed_frac:.2f}%")
-
-# % of factual exposed population that can be attributed to climate change
-change_attributed_to_climate = (pop_charac_exposed_F['exposure_ratio'].sum() - pop_charac_exposed_CF['exposure_ratio'].sum()) / pop_charac_exposed_F['exposure_ratio'].sum() * 100
-print(f"Change in exposure attributed to climate change: {change_attributed_to_climate:.2f}% (based on Dominik's data is 7%)")
-# %%
