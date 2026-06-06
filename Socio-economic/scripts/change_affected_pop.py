@@ -567,20 +567,19 @@ def print_exposure_stats(label, pop, exposed):
 # =======================================================================================================================
 # ===== CONFIGURATION =====
 EVENT_NAME = "Idai"
-BASE_DATA_PATH = Path("p:/11210471-001-compass/01_Data")
-BASE_RUN_PATH = Path("p:/11210471-001-compass/03_Runs/sofala/Idai")
+BASE_DATA_PATH = Path("../data")
 SCENARIO_PATH_F = "event_tp_era5_hourly_zarr_CF0_GTSMv41_CF0_era5_hourly_spw_IBTrACS_CF0" # factual
 SCENARIO_PATH_CF = "event_tp_era5_hourly_zarr_CF-6_GTSMv41_CF-0.07_era5_hourly_spw_IBTrACS_CF-4" # counterfactual
 
 # =======================================================================================================================
 # ===== FLOOD MODEL FILES ==== 
 # Base directory for the specific event and scenario
-sfincs_dir_F  = BASE_RUN_PATH / "sfincs" / SCENARIO_PATH_F
-sfincs_dir_CF = BASE_RUN_PATH / "sfincs" / SCENARIO_PATH_CF
+sfincs_dir_F  = BASE_DATA_PATH / "sfincs" / SCENARIO_PATH_F
+sfincs_dir_CF = BASE_DATA_PATH / "sfincs" / SCENARIO_PATH_CF
 
 # Read flood rasters
-F_flooding = sfincs_dir_F / "plot_output" / "floodmap_15cm.tif"
-CF_flooding = sfincs_dir_CF / "plot_output" / "floodmap_15cm.tif"
+F_flooding = sfincs_dir_F / "floodmap_15cm.tif"
+CF_flooding = sfincs_dir_CF / "floodmap_15cm.tif"
 hmax_F_da = rxr.open_rasterio(F_flooding).squeeze("band", drop=True)  # if single-band
 hmax_CF_da = rxr.open_rasterio(CF_flooding).squeeze("band", drop=True)  # if single-band
 hmax_F = hmax_F_da.values
@@ -603,16 +602,11 @@ region_geom = [json.loads(region.to_json())["features"][0]["geometry"]]
 
 # =======================================================================================================================
 # ===== GEOSPATIAL DATA =====
-# background = gpd.read_file(join(BASE_DATA_PATH, "gis/case_study_region_background.geojson"), driver="GeoJSON")
-# shapefile_sofala = gpd.read_file(join(BASE_DATA_PATH, "gis/sofala_province.shp"))  # from https://gadm.org/ and processed
-# beira_district = gpd.read_file(join(BASE_DATA_PATH, "gis/Beira_region.shp")) # from https://gadm.org/ and processed
-# districts_adm3 = gpd.read_file(join(BASE_DATA_PATH, "gis/sofala_districts_study_region.shp")) # from https://gadm.org/ and processed
-# gdf = gpd.read_file(join(BASE_DATA_PATH, "gis/gadm41_MOZ_2.shp")).to_crs(region_wsg84.crs) # from https://gadm.org/ and processed
-background = gpd.read_file(join(BASE_DATA_PATH, "sofala_geoms/sofala_region_background.geojson"), driver="GeoJSON")
-shapefile_sofala = gpd.read_file(join(BASE_DATA_PATH, "sofala_geoms/sofala_province.shp"))  # from https://gadm.org/ and processed
-beira_district = gpd.read_file(join(BASE_DATA_PATH, "sofala_geoms/Beira_region.shp")) # from https://gadm.org/ and processed
-districts_adm3 = gpd.read_file(join(BASE_DATA_PATH, "sofala_geoms/sofala_districts_study_region.shp")) # from https://gadm.org/ and processed
-gdf = gpd.read_file(join(BASE_DATA_PATH, "sofala_geoms/gadm41_MOZ_shp/gadm41_MOZ_2.shp")).to_crs(region_wsg84.crs) # from https://gadm.org/ and processed
+background = gpd.read_file(join(BASE_DATA_PATH, "gis/case_study_region_background.geojson"), driver="GeoJSON")
+shapefile_sofala = gpd.read_file(join(BASE_DATA_PATH, "gis/sofala_province.shp"))  # from https://gadm.org/ and processed
+beira_district = gpd.read_file(join(BASE_DATA_PATH, "gis/Beira_region.shp")) # from https://gadm.org/ and processed
+districts_adm3 = gpd.read_file(join(BASE_DATA_PATH, "gis/sofala_districts_study_region.shp")) # from https://gadm.org/ and processed
+gdf = gpd.read_file(join(BASE_DATA_PATH, "gis/gadm41_MOZ_2.shp")).to_crs(region_wsg84.crs) # from https://gadm.org/ and processed
 
 districts_adm2 = gdf[gdf.intersects(region_geom_poly)].copy()
 
@@ -650,15 +644,15 @@ districts_adm3_filtered = districts_adm3_utm[~districts_adm3_utm['NAME_3'].isin(
 # ===== POPULATION DATA =====
 # population raster from the Global Human Settlement Layer (GHSL) database (original 100 m resolution)
 # You can download the GHSL population rasters for 2020 and 1975 here: https://human-settlement.emergency.copernicus.eu/download.php?ds=pop
-population_raster_path_2020 = Path(join(BASE_DATA_PATH, "population_data/GHSL_POP/GHS_POP_E2020_GLOBE_R2023A_54009_100_V1_0_R12_C22.tif"))
-population_raster_path_1975 = Path(join(BASE_DATA_PATH, "population_data/GHSL_POP/GHS_POP_E1975_GLOBE_R2023A_54009_100_V1_0_R12_C22.tif"))
+population_raster_path_2020 = Path(join(BASE_DATA_PATH, "population/GHS_POP_E2020_GLOBE_R2023A_54009_100_V1_0_R12_C22.tif"))
+population_raster_path_1975 = Path(join(BASE_DATA_PATH, "population/GHS_POP_E1975_GLOBE_R2023A_54009_100_V1_0_R12_C22.tif"))
 
 
 #%%
 # ============================================================================================ #
 # ====================== Process population directly into flood grid ========================= #
 # ============================================================================================ #
-export_path = "../data/preprocessed/population/"
+export_path = "../data/population/preprocessed/"
 population_configs = [(1975, population_raster_path_1975, "GHSL_100m"), (2020, population_raster_path_2020, "GHSL_100m")]
 flood_maps = {"F": hmax_F, "CF": hmax_CF}
 
@@ -672,7 +666,7 @@ for year, path, source in population_configs:
         pop_path=path, land_gdf=background_utm, flood_crs=flood_grid_crs, flood_transform=flood_grid_transform,
         flood_shape=flood_grid_shape, province_geom=shapefile_sofala, region=region, districts_adm3=districts_adm3_filtered,
         districts_adm2=districts_adm2, year=year, source=source,
-        out_raster_path=(join(BASE_DATA_PATH, f"population_data/downscaled/population_{source}_{year}_region_regrid.tif")))
+        out_raster_path=(join(BASE_DATA_PATH, f"population/preprocessed/population_{source}_{year}_region_regrid.tif")))
 
     pop_data[year] = {
         "population": pop,
@@ -1140,7 +1134,6 @@ mask_exposed = (exposed_rasters[2020]["F"] > 0) | (exposed_rasters[2020]["CF"] >
 
 transition = compute_transition(cat_CF, cat_F)
 transition_counts = transition_counts_from_array(transition, all_transitions)
-transition_counts.to_csv("../results/Table_S06.csv")
 transition_exp = compute_transition(cat_CF, cat_F, mask=mask_exposed)
 
 rgba_F          = cat_array_to_rgba(cat_F, depth_colors)
@@ -1162,7 +1155,7 @@ for k, v in transition_codes.items():
 
 print("Change in flood depth category among exposed population (by settlement type):")
 print(table_cat_change_settlement)
-table_cat_change_settlement.to_csv("../results/transition_by_settlement_type.csv")
+table_cat_change_settlement.to_csv("../results/Table_S06.csv")
 
 
 #%%
@@ -1397,7 +1390,7 @@ df_change_flood_category.columns = [f"{depth}_{metric}" for depth, metric in df_
 
 
  #%%
-# FIGURE FS2 — Overview of factual changes in flood hazard and population exposure
+# FIGURE S2 — Overview of factual changes in flood hazard and population exposure
 def plot_supp_factual_changes_overview(hmax_F_da, gdf_pop_2019_exposed_F_coarse, hmax_diff, 
                                        gdf_pop_1975_exposed_F_coarse, gdf_pop_1975_exposed_CF_coarse,
                                        region_utm, background_utm, flood_extent):
@@ -1600,7 +1593,7 @@ def draw_peak_arrows(x, yA, yB, peaksA, peaksB, color, label_prefix, label_offse
                            edgecolor="none", alpha=0.5))
 
 #%%
-# Figure S4 — Plotting absolute change in exposed population per water depth
+# FIGURE S4 — Plotting absolute change in exposed population per water depth
 fig, ax = plt.subplots(figsize=(8,5), dpi=300)
 
 x = bin_centers
@@ -1674,7 +1667,7 @@ ax.legend()
 # fig.savefig("../figures/fS04.pdf", dpi=300, bbox_inches='tight')
 
 # %%
-# Figure S5 — Compare exposure change in the case of uniform growth per water depth
+# FIGURE S5 — Compare exposure change in the case of uniform growth per water depth
 fig, ax = plt.subplots(figsize=(8,5), dpi=300)
 
 x = bin_centers
