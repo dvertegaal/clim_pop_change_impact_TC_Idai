@@ -1,0 +1,63 @@
+meta:
+  root: p:\
+SNAPWAVE_Idai_setup:
+  data_type: GeoDataset
+  path: 11210471-001-compass/code/SFINCS/SFINCS_Idai_Wave_Tim/max_wave_setup_TL_v03.nc
+  driver: netcdf
+  rename:
+    transects: station
+    obs_id: station_name
+  meta:
+    notes: SNAPWAVE simulation using ERA5 significant wave height
+    source_author: Fernaldi Gradiyanto & Tim Leijnse
+  crs: 32736
+coastal_coupling_DFM_obs_points_MZB:
+  data_type: GeoDataFrame
+  path: 11210471-001-compass/01_Data/Coastal_boundary/points/coastal_bnd_MZB_5mMSL_points_1km.shp
+  driver: vector
+  meta:
+    category: geography
+    notes: Output points for the DFM model of Mozambique
+    source_author: Natalia Aleksandrova
+    source_license: na
+    source_url: none
+    source_version: 1.0
+  crs: 4326
+coastal_coupling_msk_MZB:
+  data_type: GeoDataFrame
+  path: 11210471-001-compass/01_Data/Coastal_boundary/coastal_bnd_MZB_5mMSL_polygon.geojson
+  driver: vector
+  meta:
+    category: geography
+    notes: Polygon outlining isobath of approx. 5 mMSL based on GEBCO_2024 data for
+      Mozambique coast
+    source_author: Natalia Aleksandrova
+    source_license: na
+    source_url: none
+    source_version: 1.0
+  crs: 4326
+dfm_verif_points_MZB:
+  data_type: DataFrame
+  path: 11210471-001-compass/01_Data/Coastal_boundary/points/MZB_Sofala_IHO_obs.xyn
+  driver: vector
+  driver_kwargs:
+    crs: 4326
+  meta:
+    category: geography
+    notes: observation points
+    source_author: Natalia Aleksandrova
+    source_license: na
+    source_url: none
+    source_version: 1.0
+obs_points_sofala:
+  data_type: GeoDataFrame
+  path: 11210471-001-compass/01_Data/obs_locs.geojson
+  driver: vector
+  meta:
+    category: geography
+    notes: Output points for the Sofala model
+    source_author: Natalia Aleksandrova
+    source_license: na
+    source_url: none
+    source_version: 1.0
+  crs: 4326
