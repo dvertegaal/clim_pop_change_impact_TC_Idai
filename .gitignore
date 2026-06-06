@@ -13,15 +13,25 @@ pixi.lock
 
 # Socioeconomic data
 Socio-economic/data/gis/*
+!Socio-economic/data/gis/.gitkeep
+Socio-economic/data/population/*
+!Socio-economic/data/population/.gitkeep
 Socio-economic/data/population/preprocessed/*
+!Socio-economic/data/population/preprocessed/.gitkeep
 Socio-economic/data/GLOPOP-SG/*
+!Socio-economic/data/GLOPOP-SG/.gitkeep
+!Socio-economic/data/GLOPOP-SG/preprocessed/.gitkeep
 Socio-economic/data/sfincs/event_tp_era5_hourly_zarr_CF-6_GTSMv41_CF-0.07_era5_hourly_spw_IBTrACS_CF-4/*
+!Socio-economic/data/sfincs/event_tp_era5_hourly_zarr_CF-6_GTSMv41_CF-0.07_era5_hourly_spw_IBTrACS_CF-4/.gitkeep
 Socio-economic/data/sfincs/event_tp_era5_hourly_zarr_CF0_GTSMv41_CF0_era5_hourly_spw_IBTrACS_CF0/*
+!Socio-economic/data/sfincs/event_tp_era5_hourly_zarr_CF0_GTSMv41_CF0_era5_hourly_spw_IBTrACS_CF0/.gitkeep
 Socio-economic/data/population/GHS_POP_E1975_GLOBE_R2023A_54009_100_V1_0_R12_C22.tif
 Socio-economic/data/population/GHS_POP_E2020_GLOBE_R2023A_54009_100_V1_0_R12_C22.tif
 Socio-economic/data/population/GHS_POP_E2015_GLOBE_R2023A_54009_100_V1_0_R12_C22.tif
 Socio-economic/results/*
+!Socio-economic/results/.gitkeep
 Socio-economic/figures/*
+!Socio-economic/figures/.gitkeep
 
 # Distribution / packaging
 .Python
